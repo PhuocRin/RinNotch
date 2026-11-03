@@ -242,7 +242,7 @@ struct IslandView: View {
 
     var phase: Phase {
         if m.expanded { return .expanded }
-        if case .headphones = m.transient { return .banner }
+        if m.transient != nil { return .banner }
         if m.transient != nil || m.recording != nil { return .compact }
         return .idle
     }
@@ -363,7 +363,11 @@ struct BannerView: View {
     var body: some View {
         VStack(spacing: 0) {
             Color.clear.frame(height: m.notchHeight)
-            if case .headphones(let name, let symbol) = m.transient {
+            if case .charging(let p) = m.transient {
+                chargeRow(percent: p, charging: true)
+            } else if case .unplugged(let p) = m.transient {
+                chargeRow(percent: p, charging: false)
+            } else if case .headphones(let name, let symbol) = m.transient {
                 HStack(spacing: 14) {
                     Image(systemName: symbol)
                         .font(.system(size: 30, weight: .regular))
@@ -385,6 +389,61 @@ struct BannerView: View {
             }
         }
         .foregroundStyle(.white)
+    }
+
+    func chargeRow(percent: Int, charging: Bool) -> some View {
+        HStack(spacing: 14) {
+            BigBattery(percent: percent, charging: charging)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(charging ? "Đang sạc" : "Đã ngắt sạc")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(charging ? Color.green : Color.white)
+                Text(charging ? "Pin đang được sạc" : "Đang dùng pin")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.white.opacity(0.6))
+            }
+            Spacer(minLength: 0)
+            Text("\(percent)%")
+                .font(.system(size: 26, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(charging ? Color.green : Color.white)
+        }
+        .padding(.horizontal, 22)
+        .frame(maxHeight: .infinity)
+    }
+}
+
+/// Pin cỡ lớn cho thông báo sạc: thanh pin chạy đầy tới % hiện tại, có tia sét khi đang sạc.
+struct BigBattery: View {
+    let percent: Int
+    let charging: Bool
+    @State private var fill: CGFloat = 0
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color.white.opacity(0.5), lineWidth: 2)
+                    .frame(width: 58, height: 28)
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(charging ? Color.green : (percent <= 20 ? Color.red : Color.white.opacity(0.9)))
+                    .frame(width: max(4, 50 * fill), height: 20)
+                    .padding(.leading, 4)
+                if charging {
+                    Image(systemName: "bolt.fill")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(.white)
+                        .shadow(color: .black.opacity(0.5), radius: 1)
+                        .frame(width: 58, height: 28)
+                }
+            }
+            RoundedRectangle(cornerRadius: 1.5).fill(Color.white.opacity(0.5)).frame(width: 3.5, height: 10)
+        }
+        .onAppear {
+            withAnimation(.spring(response: 1.0, dampingFraction: 0.85).delay(0.25)) {
+                fill = CGFloat(min(max(percent, 0), 100)) / 100
+            }
+        }
     }
 }
 
