@@ -1,0 +1,41 @@
+# GitHub tự build RinNotch trên máy Mac: mỗi lần đẩy code lên main, hoặc bấm Run workflow ở tab Actions.
+# File cài .dmg nằm ở mục Artifacts của lần build.
+name: Build RinNotch
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: "Máy build (macos-26-intel mặc định; macos-latest = Mac chip M). Cả hai đều ra app universal."
+        default: macos-26-intel
+        type: choice
+        options: [macos-26-intel, macos-latest]
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ${{ inputs.runner || 'macos-26-intel' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Kiểm tra trình biên dịch
+        run: |
+          uname -m
+          swift --version
+
+      - name: Đánh số build
+        run: /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${{ github.run_number }}" Info.plist
+
+      - name: Build và tạo .dmg
+        run: ./build.sh dmg
+
+      - name: Lưu file
+        uses: actions/upload-artifact@v4
+        with:
+          name: RinNotch-build
+          path: build/RinNotch-*.dmg
