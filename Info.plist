@@ -15,7 +15,7 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1</string>
+	<string>0.2</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>LSMinimumSystemVersion</key>
@@ -24,8 +24,6 @@
 	<true/>
 	<key>NSHighResolutionCapable</key>
 	<true/>
-	<key>NSCameraUsageDescription</key>
-	<string>RinNotch dùng camera cho mục Gương, chỉ khi bạn mở mục này.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>RinNotch nghe micro để vẽ sóng âm trên tai thỏ khi có app đang ghi âm. Không lưu và không gửi âm thanh đi đâu.</string>
 	<key>NSAppleEventsUsageDescription</key>

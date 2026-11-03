@@ -21,7 +21,7 @@ for ARCH in arm64 x86_64; do
     -o "build/obj/RinNotch-${ARCH}" \
     -swift-version 5 -parse-as-library \
     -framework Cocoa -framework SwiftUI -framework AVFoundation -framework CoreAudio \
-    -framework IOKit -framework Carbon -framework ServiceManagement -framework UniformTypeIdentifiers
+    -framework IOKit -framework Carbon -framework ServiceManagement -framework UniformTypeIdentifiers -framework QuickLookThumbnailing
 done
 lipo -create build/obj/RinNotch-arm64 build/obj/RinNotch-x86_64 -output "${APP}/Contents/MacOS/RinNotch"
 cp Info.plist "${APP}/Contents/Info.plist"

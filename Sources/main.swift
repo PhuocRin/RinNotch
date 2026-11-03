@@ -1,6 +1,6 @@
 // RinNotch — biến tai thỏ MacBook thành khu tiện ích nhỏ.
 // Bản 1: hiệu ứng bung từ tai thỏ, kệ file, bộ nhớ tạm, ghi chú nhanh (lưu vào Apple Notes),
-// gương camera, báo tai nghe kết nối, báo cắm sạc, sóng âm khi có app đang ghi âm, phím tắt ẩn ⌥⌘N.
+// báo tai nghe kết nối, báo cắm sạc, sóng âm khi có app đang ghi âm, phím tắt ẩn ⌥⌘N.
 
 import AppKit
 import SwiftUI
@@ -11,6 +11,7 @@ import IOKit.ps
 import Carbon.HIToolbox
 import ServiceManagement
 import UniformTypeIdentifiers
+import QuickLookThumbnailing
 
 // MARK: - Hình học tai thỏ
 
@@ -39,14 +40,13 @@ struct NotchGeometry {
 // MARK: - Dữ liệu
 
 enum Tab: String, CaseIterable, Identifiable {
-    case shelf, clipboard, notes, mirror
+    case shelf, clipboard, notes
     var id: String { rawValue }
     var title: String {
         switch self {
         case .shelf: return "Kệ file"
         case .clipboard: return "Bộ nhớ tạm"
         case .notes: return "Ghi chú"
-        case .mirror: return "Gương"
         }
     }
     var symbol: String {
@@ -54,7 +54,6 @@ enum Tab: String, CaseIterable, Identifiable {
         case .shelf: return "tray.full"
         case .clipboard: return "doc.on.clipboard"
         case .notes: return "square.and.pencil"
-        case .mirror: return "camera"
         }
     }
 }
@@ -69,7 +68,16 @@ struct RecordingInfo: Equatable {
     var appName: String
     var bundleID: String?
     var pid: pid_t
-    var start: Date
+    /// Thời gian đã ghi của các đoạn trước (cộng dồn qua các lần tạm dừng).
+    var accumulated: TimeInterval = 0
+    /// Lúc bắt đầu đoạn đang ghi; nil = đang tạm dừng.
+    var segmentStart: Date?
+    var pausedAt: Date?
+
+    var paused: Bool { segmentStart == nil }
+    func elapsed(at now: Date) -> TimeInterval {
+        accumulated + (segmentStart.map { now.timeIntervalSince($0) } ?? 0)
+    }
 }
 
 enum ClipKind {
@@ -126,7 +134,7 @@ final class NotchModel: ObservableObject {
     @Published var noteDraft = ""
     @Published var noteStatus: String?
     @Published var dropTargeted = false
-    @Published var cameraDenied = false
+    @Published var micDenied = false
 
     var draggingOut = false
     private var transientTimer: Timer?
@@ -230,24 +238,21 @@ struct PillButton: ButtonStyle {
 struct IslandView: View {
     @ObservedObject var m: NotchModel
 
-    enum Phase: Equatable { case idle, compact, expanded }
+    enum Phase: Equatable { case idle, compact, banner, expanded }
 
     var phase: Phase {
         if m.expanded { return .expanded }
+        if case .headphones = m.transient { return .banner }
         if m.transient != nil || m.recording != nil { return .compact }
         return .idle
-    }
-
-    var compactExtra: CGFloat {
-        if case .headphones = m.transient { return 300 }
-        return 210
     }
 
     var size: CGSize {
         switch phase {
         case .idle: return CGSize(width: m.notchWidth, height: m.notchHeight)
-        case .compact: return CGSize(width: m.notchWidth + compactExtra, height: m.notchHeight)
-        case .expanded: return CGSize(width: 600, height: m.notchHeight + 200)
+        case .compact: return CGSize(width: m.notchWidth + 210, height: m.notchHeight)
+        case .banner: return CGSize(width: max(m.notchWidth + 150, 380), height: m.notchHeight + 74)
+        case .expanded: return CGSize(width: 600, height: m.notchHeight + 210)
         }
     }
 
@@ -255,6 +260,7 @@ struct IslandView: View {
         switch phase {
         case .idle: return 9
         case .compact: return 14
+        case .banner: return 26
         case .expanded: return 28
         }
     }
@@ -272,6 +278,9 @@ struct IslandView: View {
                 case .compact:
                     CompactView(m: m)
                         .frame(height: m.notchHeight)
+                        .padding(.horizontal, topRadius)
+                case .banner:
+                    BannerView(m: m)
                         .padding(.horizontal, topRadius)
                 case .expanded:
                     ExpandedView(m: m)
@@ -310,9 +319,8 @@ struct CompactView: View {
     @ViewBuilder var leading: some View {
         if let t = m.transient {
             switch t {
-            case .headphones(_, let symbol):
-                Image(systemName: symbol)
-                    .font(.system(size: 15, weight: .medium))
+            case .headphones:
+                EmptyView()
             case .charging:
                 HStack(spacing: 5) {
                     Image(systemName: "bolt.fill").foregroundStyle(Color.green)
@@ -334,13 +342,8 @@ struct CompactView: View {
     @ViewBuilder var trailing: some View {
         if let t = m.transient {
             switch t {
-            case .headphones(let name, _):
-                HStack(spacing: 5) {
-                    Text(name).lineLimit(1).truncationMode(.tail)
-                    Circle().fill(Color.green).frame(width: 6, height: 6)
-                }
-                .font(.system(size: 12, weight: .semibold))
-                .frame(maxWidth: 120, alignment: .trailing)
+            case .headphones:
+                EmptyView()
             case .charging(let p), .unplugged(let p):
                 HStack(spacing: 6) {
                     Text("\(p)%").font(.system(size: 12, weight: .semibold)).monospacedDigit()
@@ -353,31 +356,82 @@ struct CompactView: View {
     }
 }
 
+/// Thông báo thả xuống từ tai thỏ (tai nghe kết nối): hiện đủ tên thiết bị.
+struct BannerView: View {
+    @ObservedObject var m: NotchModel
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Color.clear.frame(height: m.notchHeight)
+            if case .headphones(let name, let symbol) = m.transient {
+                HStack(spacing: 14) {
+                    Image(systemName: symbol)
+                        .font(.system(size: 30, weight: .regular))
+                        .frame(width: 46, height: 46)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(name)
+                            .font(.system(size: 14, weight: .semibold))
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                        HStack(spacing: 5) {
+                            Circle().fill(Color.green).frame(width: 6, height: 6)
+                            Text("Đã kết nối").font(.system(size: 12, weight: .medium)).foregroundStyle(Color.green)
+                        }
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 22)
+                .frame(maxHeight: .infinity)
+            }
+        }
+        .foregroundStyle(.white)
+    }
+}
+
+/// Dấu hiệu ghi âm: icon app đang dùng micro, chấm đỏ, thời gian cộng dồn qua các lần tạm dừng.
+/// Thời gian là thời gian micro được dùng: khớp với app ghi âm khi app đó nhả micro lúc tạm dừng.
 struct RecordingBadge: View {
     let info: RecordingInfo
+    var showName = false
     @State private var pulse = false
 
     var body: some View {
         HStack(spacing: 6) {
-            Circle()
-                .fill(Color.red)
-                .frame(width: 8, height: 8)
-                .opacity(pulse ? 0.35 : 1)
-                .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: pulse)
-                .onAppear { pulse = true }
-            TimelineView(.periodic(from: info.start, by: 1)) { ctx in
-                Text(Self.format(ctx.date.timeIntervalSince(info.start)))
+            if let icon = NSRunningApplication(processIdentifier: info.pid)?.icon {
+                Image(nsImage: icon).resizable().frame(width: 18, height: 18)
+            }
+            if info.paused {
+                Image(systemName: "pause.fill")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.7))
+            } else {
+                Circle()
+                    .fill(Color.red)
+                    .frame(width: 8, height: 8)
+                    .opacity(pulse ? 0.3 : 1)
+                    .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: pulse)
+                    .onAppear { pulse = true }
+            }
+            TimelineView(.periodic(from: .now, by: 0.5)) { ctx in
+                Text(Self.format(info.elapsed(at: ctx.date)))
                     .font(.system(size: 12, weight: .semibold))
                     .monospacedDigit()
-                    .foregroundStyle(Color(red: 1, green: 0.55, blue: 0.5))
+                    .foregroundStyle(info.paused ? Color.white.opacity(0.65) : Color(red: 1, green: 0.55, blue: 0.5))
+            }
+            if showName {
+                Text(info.paused ? "· \(info.appName) tạm dừng" : "· \(info.appName)")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.6))
+                    .lineLimit(1)
             }
         }
-        .help("\(info.appName) đang ghi âm")
+        .help(info.paused ? "\(info.appName) đang tạm dừng" : "\(info.appName) đang dùng micro")
     }
 
     static func format(_ t: TimeInterval) -> String {
         let s = max(0, Int(t))
-        return String(format: "%d:%02d", s / 60, s % 60)
+        return s >= 3600 ? String(format: "%d:%02d:%02d", s / 3600, (s % 3600) / 60, s % 60)
+                         : String(format: "%d:%02d", s / 60, s % 60)
     }
 }
 
@@ -448,9 +502,18 @@ struct ExpandedView: View {
                 }
                 Spacer(minLength: 0)
                 if let r = m.recording {
-                    HStack(spacing: 6) {
-                        RecordingBadge(info: r)
-                        Waveform(levels: m.levels).scaleEffect(0.8)
+                    HStack(spacing: 8) {
+                        RecordingBadge(info: r, showName: !m.micDenied)
+                        if m.micDenied {
+                            Button("Cấp quyền micro để hiện sóng âm") {
+                                if let u = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
+                                    NSWorkspace.shared.open(u)
+                                }
+                            }
+                            .buttonStyle(PillButton())
+                        } else {
+                            Waveform(levels: m.levels).scaleEffect(0.8)
+                        }
                     }
                 }
             }
@@ -459,7 +522,6 @@ struct ExpandedView: View {
                 case .shelf: ShelfView(m: m)
                 case .clipboard: ClipboardView(m: m)
                 case .notes: NotesView(m: m)
-                case .mirror: MirrorView(m: m)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -529,9 +591,8 @@ struct ShelfItem: View {
     var body: some View {
         let exists = FileManager.default.fileExists(atPath: url.path)
         VStack(spacing: 5) {
-            Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
-                .resizable()
-                .frame(width: 44, height: 44)
+            FileThumb(url: url)
+                .frame(width: 64, height: 50)
             Text(exists ? url.lastPathComponent : "File không còn")
                 .font(.system(size: 10, weight: .medium))
                 .lineLimit(1)
@@ -553,6 +614,37 @@ struct ShelfItem: View {
             Button("Hiện trong Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
             Divider()
             Button("Bỏ khỏi kệ") { m.removeFromShelf(url) }
+        }
+    }
+}
+
+/// Ảnh xem trước của file (ảnh, video, PDF…) qua QuickLook; chưa có thì dùng icon file.
+struct FileThumb: View {
+    let url: URL
+    @State private var thumb: NSImage?
+
+    var body: some View {
+        Group {
+            if let thumb {
+                Image(nsImage: thumb)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .shadow(color: .black.opacity(0.4), radius: 3, y: 1)
+            } else {
+                Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+            }
+        }
+        .task(id: url) {
+            let scale = NSScreen.main?.backingScaleFactor ?? 2
+            let req = QLThumbnailGenerator.Request(
+                fileAt: url, size: CGSize(width: 64, height: 50), scale: scale, representationTypes: .thumbnail
+            )
+            if let rep = try? await QLThumbnailGenerator.shared.generateBestRepresentation(for: req) {
+                thumb = rep.nsImage
+            }
         }
     }
 }
@@ -621,37 +713,63 @@ struct NotesView: View {
     @FocusState private var focused: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                TextField("Gõ ý tưởng rồi nhấn Enter…", text: $m.noteDraft)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13))
-                    .focused($focused)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.09)))
-                    .onSubmit { NotesSaver.save(m) }
-                Button("Lưu") { NotesSaver.save(m) }
-                    .buttonStyle(PillButton(prominent: true))
-                    .disabled(m.noteDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 8) {
+                ZStack(alignment: .topLeading) {
+                    TextEditor(text: $m.noteDraft)
+                        .font(.system(size: 13))
+                        .scrollContentBackground(.hidden)
+                        .focused($focused)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 7)
+                        .onKeyPress(.return, phases: .down) { press in
+                            if press.modifiers.contains(.command) {
+                                NotesSaver.save(m)
+                                return .handled
+                            }
+                            return .ignored
+                        }
+                    if m.noteDraft.isEmpty {
+                        Text("Gõ ý tưởng… Enter để xuống dòng")
+                            .font(.system(size: 13))
+                            .foregroundStyle(.white.opacity(0.35))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
+                            .allowsHitTesting(false)
+                    }
+                }
+                .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.09)))
+                HStack(spacing: 8) {
+                    Text(m.noteStatus ?? "Lưu bằng nút Lưu hoặc ⌘ Enter")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(0.6))
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                    Button("Lưu vào Notes") { NotesSaver.save(m) }
+                        .buttonStyle(PillButton(prominent: true))
+                        .disabled(m.noteDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
             }
-            if let st = m.noteStatus {
-                Text(st).font(.system(size: 11)).foregroundStyle(.white.opacity(0.6))
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            ScrollView(.vertical, showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 5) {
-                    ForEach(m.notes.prefix(10)) { n in
-                        HStack(alignment: .top, spacing: 8) {
-                            Image(systemName: n.savedToNotes ? "checkmark.circle.fill" : "circle.dashed")
-                                .font(.system(size: 10))
-                                .foregroundStyle(n.savedToNotes ? Color.green : Color.white.opacity(0.4))
-                                .padding(.top, 2)
-                            Text(n.text).font(.system(size: 12)).lineLimit(2)
-                            Spacer(minLength: 0)
+            if !m.notes.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Gần đây").font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.5))
+                    ScrollView(.vertical, showsIndicators: false) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(m.notes.prefix(10)) { n in
+                                HStack(alignment: .top, spacing: 6) {
+                                    Image(systemName: n.savedToNotes ? "checkmark.circle.fill" : "circle.dashed")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(n.savedToNotes ? Color.green : Color.white.opacity(0.4))
+                                        .padding(.top, 2)
+                                    Text(n.text).font(.system(size: 11)).lineLimit(2)
+                                    Spacer(minLength: 0)
+                                }
+                            }
                         }
                     }
                 }
+                .frame(width: 170)
             }
         }
         .onAppear { DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { focused = true } }
@@ -708,105 +826,6 @@ enum NotesSaver {
         do { try p.run() } catch {
             item.savedToNotes = false
             m.noteStatus = "Chưa lưu được vào Notes, ghi chú vẫn được giữ trong app."
-        }
-    }
-}
-
-// MARK: Gương
-
-final class CameraController: @unchecked Sendable {
-    static let shared = CameraController()
-    let session = AVCaptureSession()
-    private let queue = DispatchQueue(label: "rinnotch.camera")
-    private var configured = false
-
-    func start() {
-        queue.async {
-            if !self.configured {
-                self.session.beginConfiguration()
-                self.session.sessionPreset = .high
-                if let dev = AVCaptureDevice.default(for: .video),
-                   let input = try? AVCaptureDeviceInput(device: dev),
-                   self.session.canAddInput(input) {
-                    self.session.addInput(input)
-                }
-                self.session.commitConfiguration()
-                self.configured = true
-            }
-            if !self.session.isRunning { self.session.startRunning() }
-        }
-    }
-
-    func stop() {
-        queue.async {
-            if self.session.isRunning { self.session.stopRunning() }
-        }
-    }
-}
-
-final class PreviewNSView: NSView {
-    let previewLayer: AVCaptureVideoPreviewLayer
-
-    init(session: AVCaptureSession) {
-        previewLayer = AVCaptureVideoPreviewLayer(session: session)
-        super.init(frame: .zero)
-        layer = CALayer()
-        wantsLayer = true
-        previewLayer.videoGravity = .resizeAspectFill
-        layer?.addSublayer(previewLayer)
-    }
-    required init?(coder: NSCoder) { fatalError() }
-
-    override func layout() {
-        super.layout()
-        previewLayer.frame = bounds
-        if let c = previewLayer.connection, c.isVideoMirroringSupported {
-            c.automaticallyAdjustsVideoMirroring = false
-            c.isVideoMirrored = true
-        }
-    }
-}
-
-struct CameraPreview: NSViewRepresentable {
-    func makeNSView(context: Context) -> PreviewNSView { PreviewNSView(session: CameraController.shared.session) }
-    func updateNSView(_ nsView: PreviewNSView, context: Context) { nsView.needsLayout = true }
-}
-
-struct MirrorView: View {
-    @ObservedObject var m: NotchModel
-
-    var body: some View {
-        HStack(spacing: 14) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 18).fill(Color.white.opacity(0.06))
-                if m.cameraDenied {
-                    Text("Chưa có quyền camera.\nCài đặt → Quyền riêng tư & Bảo mật → Camera → bật RinNotch")
-                        .font(.system(size: 11))
-                        .multilineTextAlignment(.center)
-                        .foregroundStyle(.white.opacity(0.7))
-                        .padding(10)
-                } else {
-                    CameraPreview()
-                        .clipShape(RoundedRectangle(cornerRadius: 18))
-                }
-            }
-            .frame(width: 260)
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Soi gương trước khi gọi hoặc live")
-                    .font(.system(size: 13, weight: .semibold))
-                Text("Camera chỉ bật khi đang mở mục này và tắt ngay khi tai thỏ thu lại.")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.white.opacity(0.6))
-                    .fixedSize(horizontal: false, vertical: true)
-                Button("Mở FaceTime") {
-                    if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.FaceTime") {
-                        NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
-                    }
-                }
-                .buttonStyle(PillButton(prominent: true))
-                Spacer(minLength: 0)
-            }
-            Spacer(minLength: 0)
         }
     }
 }
@@ -998,70 +1017,141 @@ final class RecordingWatcher {
     private var timer: Timer?
     private var engine: AVAudioEngine?
     private var lastPush = Date.distantPast
+    private var requesting = false
+    private var peakSinceLog: CGFloat = 0
+    private var lastLog = Date.distantPast
 
     init(model: NotchModel) {
         m = model
-        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+        timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.check() }
         }
     }
 
+    /// Phiên ghi âm giữ lại tối đa 15 phút sau khi tạm dừng để ghi tiếp thì cộng dồn thời gian.
+    private var session: RecordingInfo?
+    private let pausedVisible: TimeInterval = 8
+    private let sessionKeep: TimeInterval = 15 * 60
+
     private func check() {
+        let now = Date()
         let apps = CA.micUsers()
             .compactMap { NSRunningApplication(processIdentifier: $0) }
             .filter { $0.activationPolicy == .regular }
         if let app = apps.first {
-            if m.recording?.pid != app.processIdentifier {
-                m.recording = RecordingInfo(
+            if var s = session, s.bundleID == app.bundleIdentifier, s.pid == app.processIdentifier {
+                if s.paused {
+                    s.segmentStart = now
+                    s.pausedAt = nil
+                    session = s
+                    Diag.log("Ghi tiếp, đã có \(Int(s.accumulated)) giây")
+                }
+            } else {
+                session = RecordingInfo(
                     appName: app.localizedName ?? "Ứng dụng",
                     bundleID: app.bundleIdentifier,
                     pid: app.processIdentifier,
-                    start: Date()
+                    segmentStart: now
                 )
+                Diag.log("Micro đang được dùng bởi \(app.localizedName ?? "?") (\(app.bundleIdentifier ?? "?"))")
             }
             startMeter()
-        } else if m.recording != nil {
-            m.recording = nil
-            stopMeter()
+        } else if var s = session {
+            if !s.paused {
+                s.accumulated += now.timeIntervalSince(s.segmentStart ?? now)
+                s.segmentStart = nil
+                s.pausedAt = now
+                session = s
+                stopMeter()
+                Diag.log("Micro được nhả (tạm dừng hoặc xong), đã ghi \(Int(s.accumulated)) giây")
+            }
+            let pausedFor = now.timeIntervalSince(s.pausedAt ?? now)
+            let appGone = NSRunningApplication(processIdentifier: s.pid)?.isTerminated ?? true
+            if appGone || pausedFor > sessionKeep {
+                session = nil
+            }
         }
+        // Chỉ hiện trên tai thỏ khi đang ghi, hoặc vừa tạm dừng trong vài giây.
+        var visible: RecordingInfo?
+        if let s = session, !s.paused || now.timeIntervalSince(s.pausedAt ?? now) < pausedVisible {
+            visible = s
+        }
+        if m.recording != visible { m.recording = visible }
     }
 
     private func startMeter() {
-        guard engine == nil else { return }
-        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        guard engine == nil, !requesting else { return }
+        let status = AVCaptureDevice.authorizationStatus(for: .audio)
+        switch status {
         case .authorized:
-            break
+            m.micDenied = false
         case .notDetermined:
-            AVCaptureDevice.requestAccess(for: .audio) { _ in }
+            requesting = true
+            Diag.log("Xin quyền micro…")
+            AVCaptureDevice.requestAccess(for: .audio) { ok in
+                Task { @MainActor in
+                    self.requesting = false
+                    Diag.log(ok ? "Đã được cấp quyền micro" : "Bị từ chối quyền micro")
+                    self.m.micDenied = !ok
+                    if ok, let s = self.session, !s.paused { self.startMeter() }
+                }
+            }
             return
         default:
+            if !m.micDenied { Diag.log("Không có quyền micro (trạng thái \(status.rawValue))") }
+            m.micDenied = true
             return
         }
         let e = AVAudioEngine()
         let input = e.inputNode
         let fmt = input.outputFormat(forBus: 0)
-        guard fmt.channelCount > 0, fmt.sampleRate > 0 else { return }
-        input.installTap(onBus: 0, bufferSize: 1024, format: fmt) { [weak self] buf, _ in
-            guard let ch = buf.floatChannelData?[0] else { return }
-            let n = Int(buf.frameLength)
-            guard n > 0 else { return }
-            var sum: Float = 0
-            for i in 0..<n { sum += ch[i] * ch[i] }
-            let rms = sqrt(sum / Float(n))
-            let db = 20 * log10(max(rms, 0.000_01))
-            let level = CGFloat(min(max((db + 55) / 45, 0.05), 1))
-            Task { @MainActor in self?.push(level) }
+        Diag.log("Định dạng micro: \(fmt.channelCount) kênh, \(Int(fmt.sampleRate)) Hz")
+        guard fmt.channelCount > 0, fmt.sampleRate > 0 else {
+            Diag.log("Micro không có kênh nào, bỏ qua")
+            return
         }
+        input.installTap(onBus: 0, bufferSize: 1024, format: fmt, block: RecordingWatcher.makeTap(self))
         do {
             try e.start()
             engine = e
+            Diag.log("Bắt đầu đo sóng âm")
         } catch {
             input.removeTap(onBus: 0)
+            Diag.log("Không mở được micro: \(error.localizedDescription)")
+        }
+    }
+
+    /// Tạo block chạy trên luồng âm thanh (không gắn với luồng chính).
+    nonisolated static func makeTap(_ owner: RecordingWatcher) -> AVAudioNodeTapBlock {
+        weak var w = owner
+        return { buf, _ in
+            guard let ch = buf.floatChannelData else { return }
+            let n = Int(buf.frameLength)
+            guard n > 0 else { return }
+            var peak: Float = 0
+            var sum: Float = 0
+            let c = ch[0]
+            for i in 0..<n {
+                let v = c[i]
+                sum += v * v
+                peak = max(peak, abs(v))
+            }
+            let rms = sqrt(sum / Float(n))
+            let db = 20 * log10(max(rms, 0.000_001))
+            // -60 dB (im lặng) → 0, -12 dB (nói to) → 1
+            let level = CGFloat(min(max((db + 60) / 48, 0.04), 1))
+            Task { @MainActor in w?.push(level) }
         }
     }
 
     private func push(_ v: CGFloat) {
+        peakSinceLog = max(peakSinceLog, v)
         let now = Date()
+        if now.timeIntervalSince(lastLog) > 3 {
+            Diag.log(String(format: "Mức âm lớn nhất 3 giây qua: %.2f", peakSinceLog))
+            peakSinceLog = 0
+            lastLog = now
+        }
         guard now.timeIntervalSince(lastPush) > 0.05 else { return }
         lastPush = now
         m.pushLevel(v)
@@ -1072,6 +1162,18 @@ final class RecordingWatcher {
         engine?.stop()
         engine = nil
         m.levels = Array(repeating: 0.08, count: 14)
+    }
+}
+
+/// Nhật ký chẩn đoán 80 dòng gần nhất (chỉ trong bộ nhớ). Menu → Sao chép nhật ký.
+@MainActor
+enum Diag {
+    static var lines: [String] = []
+    static func log(_ s: String) {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss"
+        lines.append("\(f.string(from: Date()))  \(s)")
+        if lines.count > 80 { lines.removeFirst(lines.count - 80) }
     }
 }
 
@@ -1263,7 +1365,6 @@ final class NotchController {
         guard !model.expanded else { return }
         model.expanded = true
         panel.ignoresMouseEvents = false
-        if model.tab == .mirror { startCamera() }
     }
 
     func scheduleCollapse(force: Bool) {
@@ -1292,31 +1393,9 @@ final class NotchController {
         model.expanded = false
         model.dropTargeted = false
         panel.ignoresMouseEvents = true
-        CameraController.shared.stop()
         if panel.isKeyWindow {
             _ = panel.makeFirstResponder(nil)
             NSWorkspace.shared.frontmostApplication?.activate()
-        }
-    }
-
-    func tabChanged() {
-        if model.expanded && model.tab == .mirror { startCamera() } else { CameraController.shared.stop() }
-    }
-
-    private func startCamera() {
-        switch AVCaptureDevice.authorizationStatus(for: .video) {
-        case .authorized:
-            model.cameraDenied = false
-            CameraController.shared.start()
-        case .notDetermined:
-            AVCaptureDevice.requestAccess(for: .video) { ok in
-                Task { @MainActor in
-                    self.model.cameraDenied = !ok
-                    if ok && self.model.expanded && self.model.tab == .mirror { CameraController.shared.start() }
-                }
-            }
-        default:
-            model.cameraDenied = true
         }
     }
 
@@ -1360,7 +1439,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem!
     var headphones: HeadphoneWatcher?
     var recording: RecordingWatcher?
-    private var tabObserver: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self
@@ -1370,9 +1448,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         headphones = HeadphoneWatcher(model: model)
         recording = RecordingWatcher(model: model)
         HotKey.register()
-        tabObserver = model.$tab.dropFirst().sink { [weak self] _ in
-            DispatchQueue.main.async { MainActor.assumeIsolated { self?.controller.tabChanged() } }
-        }
         setupStatusItem()
     }
 
@@ -1408,6 +1483,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let about = NSMenuItem(title: "RinNotch \(ver) (\(build)) · Phước Rin", action: nil, keyEquivalent: "")
         about.isEnabled = false
         menu.addItem(about)
+        let diag = NSMenuItem(title: "Sao chép nhật ký chẩn đoán", action: #selector(copyDiag), keyEquivalent: "")
+        diag.target = self
+        menu.addItem(diag)
         menu.addItem(.separator())
         let quit = NSMenuItem(title: "Thoát RinNotch", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quit)
@@ -1425,7 +1503,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let raw = sender.representedObject as? String, let t = Tab(rawValue: raw) else { return }
         if model.hidden { toggleHidden() }
         controller.expand(tab: t)
-        controller.tabChanged()
+    }
+
+    @objc func copyDiag() {
+        let os = ProcessInfo.processInfo.operatingSystemVersionString
+        let ver = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
+        let mic = AVCaptureDevice.authorizationStatus(for: .audio).rawValue
+        var text = "RinNotch \(ver) (\(build)) · macOS \(os) · quyền micro: \(mic)\n"
+        text += Diag.lines.isEmpty ? "(chưa có nhật ký)" : Diag.lines.joined(separator: "\n")
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+        ClipboardWatcher.shared?.ignore(pb.changeCount)
     }
 
     @objc func toggleLogin() {
