@@ -29,6 +29,8 @@ cp Info.plist "${APP}/Contents/Info.plist"
 # Icon app + icon thanh menu (đơn sắc, tự đổi theo nền sáng/tối)
 iconutil -c icns assets/AppIcon.iconset -o "${APP}/Contents/Resources/AppIcon.icns"
 cp assets/menubar/MenuBarIcon*.png "${APP}/Contents/Resources/"
+# Ảnh QR ủng hộ (VietQR, lấy từ web phuocrin.com)
+if [[ -f assets/donate-qr.png ]]; then cp assets/donate-qr.png "${APP}/Contents/Resources/donate-qr.png"; fi
 
 # Trình đọc "Đang phát" (chạy qua /usr/bin/perl, xem Helper/rinmedia.m)
 xcrun clang -dynamiclib -fobjc-arc -O2 -arch arm64 -arch x86_64 -mmacosx-version-min=14.0 \
@@ -49,11 +51,36 @@ codesign --verify --strict "${APP}"
 codesign -d -r- "${APP}" 2>&1 | grep -i designated || true
 echo "✓ Xong: ${APP}"
 
-if [[ "${1:-}" == "dmg" ]]; then
+make_dmg() {
   DMG="build/RinNotch-${VERSION}.dmg"
   echo "→ Đang tạo file cài .dmg…"
   python3 -m venv build/.venv
   build/.venv/bin/pip install --quiet --disable-pip-version-check dmgbuild
   build/.venv/bin/dmgbuild -s dmg_settings.py -D app="${APP}" "RinNotch" "${DMG}"
   echo "✓ File cài: ${DMG}"
-fi
+}
+
+# Gói cho bộ tự cập nhật trong app (.zip + chữ ký ed25519 .sig nếu có UPDATE_KEY).
+make_update_zip() {
+  ZIP="build/RinNotch-${VERSION}.zip"
+  ditto -c -k --keepParent "${APP}" "${ZIP}"
+  echo "✓ Gói cập nhật: ${ZIP}"
+  if [[ -n "${UPDATE_KEY:-}" ]]; then
+    build/.venv/bin/pip install --quiet --disable-pip-version-check cryptography
+    ZIP="${ZIP}" build/.venv/bin/python - <<'PY'
+import base64, os
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+key = Ed25519PrivateKey.from_private_bytes(base64.b64decode(os.environ["UPDATE_KEY"]))
+path = os.environ["ZIP"]
+open(path + ".sig", "w").write(base64.b64encode(key.sign(open(path, "rb").read())).decode())
+PY
+    echo "✓ Chữ ký gói cập nhật: ${ZIP}.sig"
+  else
+    echo "⚠ Không có UPDATE_KEY: gói cập nhật chưa được ký, app sẽ không tự cài gói này."
+  fi
+}
+
+case "${1:-}" in
+  dmg) make_dmg ;;
+  release) make_dmg; make_update_zip ;;
+esac

@@ -12,6 +12,8 @@ import Carbon.HIToolbox
 import ServiceManagement
 import UniformTypeIdentifiers
 import QuickLookThumbnailing
+import CryptoKit
+import Security
 
 // MARK: - Hình học tai thỏ
 
@@ -202,8 +204,8 @@ final class NotchModel: ObservableObject {
     @Published var artwork: NSImage?
     @Published var timer = TimerState()
 
-    var musicCompact: Bool { nowPlaying?.playing == true && !(nowPlaying?.title.isEmpty ?? true) }
-    var timerCompact: Bool { timer.running }
+    var musicCompact: Bool { Prefs.showMusic && nowPlaying?.playing == true && !(nowPlaying?.title.isEmpty ?? true) }
+    var timerCompact: Bool { Prefs.showTimer && timer.running }
 
     var draggingOut = false
     private var transientTimer: Timer?
@@ -321,7 +323,7 @@ struct IslandView: View {
         case .idle: return CGSize(width: m.notchWidth, height: m.notchHeight)
         case .compact: return CGSize(width: m.notchWidth + (m.recording == nil && !m.timerCompact ? 130 : 210), height: m.notchHeight)
         case .banner: return CGSize(width: max(m.notchWidth + 170, 400), height: m.notchHeight + 78)
-        case .expanded: return CGSize(width: NotchController.expandedWidth, height: m.notchHeight + 214)
+        case .expanded: return CGSize(width: NotchController.expandedWidth, height: m.notchHeight + 224)
         }
     }
 
@@ -712,14 +714,13 @@ struct ExpandedView: View {
                     Button {
                         m.tab = t
                     } label: {
-                        HStack(spacing: 5) {
-                            Image(systemName: t.symbol)
-                            if m.tab == t { Text(t.title) }
+                        HStack(spacing: 6) {
+                            Image(systemName: t.symbol).font(.system(size: 15, weight: .semibold))
+                            if m.tab == t { Text(t.title).font(.system(size: 13, weight: .semibold)) }
                         }
-                            .font(.system(size: 11, weight: .semibold))
-                            .frame(minWidth: 18)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
+                            .frame(minWidth: 24, minHeight: 22)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
                             .background(Capsule().fill(Color.white.opacity(m.tab == t ? 0.2 : 0.06)))
                             .foregroundStyle(.white.opacity(m.tab == t ? 1 : 0.75))
                             .contentShape(Capsule())
@@ -1207,7 +1208,7 @@ struct ShelfView: View {
                     VStack(spacing: 6) {
                         Image(systemName: "tray.and.arrow.down").font(.system(size: 22))
                         Text("Kéo file thả vào tai thỏ").font(.system(size: 12, weight: .semibold))
-                        Text("File nằm chờ ở đây, kéo ra chỗ khác để sao chép")
+                        Text("Kéo ra = sao chép · giữ ⌘ khi kéo = chuyển file")
                             .font(.system(size: 11)).foregroundStyle(.white.opacity(0.55))
                     }
                     .foregroundStyle(.white.opacity(0.8))
@@ -1737,6 +1738,7 @@ final class HeadphoneWatcher {
         lastDevice = dev
         let t = CA.transport(dev)
         guard t == kAudioDeviceTransportTypeBluetooth || t == kAudioDeviceTransportTypeBluetoothLE else { return }
+        guard Prefs.showHeadphones else { return }
         let name = CA.name(dev)
         let info = HeadphoneInfo(name: name.isEmpty ? "Tai nghe" : name, symbol: Self.symbol(for: name))
         m.showTransient(.headphones(info), seconds: 5)
@@ -1753,6 +1755,12 @@ final class HeadphoneWatcher {
                 if let l = levels {
                     var u = cur
                     u.left = l.left; u.right = l.right; u.caseLevel = l.caseLevel; u.main = l.main
+                    if let pid = l.productID, let sym = HeadphoneWatcher.symbol(forProductID: pid) {
+                        u.symbol = sym
+                        Diag.log("Mã tai nghe \(pid) → \(sym)")
+                    } else if let pid = l.productID {
+                        Diag.log("Mã tai nghe \(pid) chưa có trong bảng, dùng icon theo tên")
+                    }
                     self.m.transient = .headphones(u)
                     Diag.log("Pin tai nghe: T \(l.left ?? -1) P \(l.right ?? -1) Hộp \(l.caseLevel ?? -1) Chung \(l.main ?? -1)")
                 } else if attempt == 0 {
@@ -1767,7 +1775,7 @@ final class HeadphoneWatcher {
         }
     }
 
-    nonisolated static func readBattery(name: String) -> (left: Int?, right: Int?, caseLevel: Int?, main: Int?)? {
+    nonisolated static func readBattery(name: String) -> (left: Int?, right: Int?, caseLevel: Int?, main: Int?, productID: String?)? {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/sbin/system_profiler")
         p.arguments = ["SPBluetoothDataType", "-json", "-detailLevel", "basic"]
@@ -1790,12 +1798,35 @@ final class HeadphoneWatcher {
                     guard let d = value as? [String: Any] else { continue }
                     guard devName == name || connected.count == 1 else { continue }
                     let r = (left: num(d["device_batteryLevelLeft"]), right: num(d["device_batteryLevelRight"]),
-                             caseLevel: num(d["device_batteryLevelCase"]), main: num(d["device_batteryLevelMain"]))
-                    if r.left != nil || r.right != nil || r.caseLevel != nil || r.main != nil { return r }
+                             caseLevel: num(d["device_batteryLevelCase"]), main: num(d["device_batteryLevelMain"]),
+                             productID: (d["device_productID"] as? String)?.lowercased())
+                    if r.left != nil || r.right != nil || r.caseLevel != nil || r.main != nil || r.productID != nil { return r }
                 }
             }
         }
         return nil
+    }
+
+    /// Mã sản phẩm Bluetooth của Apple/Beats → icon SF Symbols (theo bảng Bluetooth PIDs của The Apple Wiki).
+    /// Mỗi mẫu có vài tên icon dự phòng vì tên icon khác nhau giữa các bản macOS.
+    static let productSymbols: [String: [String]] = [
+        "0x2002": ["airpods"], "0x200f": ["airpods"],
+        "0x2013": ["airpods.gen3", "airpods"],
+        "0x2019": ["airpods.gen4", "airpods.gen3", "airpods"], "0x201b": ["airpods.gen4", "airpods.gen3", "airpods"],
+        "0x200e": ["airpodspro", "airpods.pro"], "0x2014": ["airpodspro", "airpods.pro"], "0x2024": ["airpodspro", "airpods.pro"],
+        "0x200a": ["airpodsmax", "airpods.max"], "0x201f": ["airpodsmax", "airpods.max"], "0x202d": ["airpodsmax", "airpods.max"],
+        "0x200b": ["beats.powerbeatspro", "beats.earphones"], "0x2003": ["beats.earphones"], "0x200d": ["beats.earphones"],
+        "0x2005": ["beats.earphones"], "0x2010": ["beats.earphones"],
+        "0x2006": ["beats.headphones"], "0x2009": ["beats.headphones"], "0x200c": ["beats.headphones"],
+        "0x2017": ["beats.headphones"], "0x2025": ["beats.headphones"],
+        "0x2011": ["beats.studiobuds", "beats.earphones"], "0x2016": ["beats.studiobuds", "beats.earphones"],
+        "0x2012": ["beats.fitpro", "beats.earphones"], "0x2026": ["beats.solobuds", "beats.earphones"],
+        "0x201a": ["beats.pill", "hifispeaker"], "0x2600": ["beats.pill", "hifispeaker"],
+    ]
+
+    static func symbol(forProductID pid: String) -> String? {
+        guard let list = productSymbols[pid.lowercased()] else { return nil }
+        return list.first { NSImage(systemSymbolName: $0, accessibilityDescription: nil) != nil }
     }
 
     static func symbol(for name: String) -> String {
@@ -1872,7 +1903,7 @@ final class RecordingWatcher {
         }
         // Chỉ hiện trên tai thỏ khi đang ghi, hoặc vừa tạm dừng trong vài giây.
         var visible: RecordingInfo?
-        if let s = session, !s.paused || now.timeIntervalSince(s.pausedAt ?? now) < pausedVisible {
+        if Prefs.showRecording, let s = session, !s.paused || now.timeIntervalSince(s.pausedAt ?? now) < pausedVisible {
             visible = s
         }
         if m.recording != visible { m.recording = visible }
@@ -2393,11 +2424,12 @@ final class PowerWatcher {
         guard let ac = r.ac else { return }
         defer { onAC = ac; lastPercent = r.percent }
         if let was = onAC, was != ac {
+            guard Prefs.showCharging else { return }
             m.showTransient(ac ? .charging(percent: r.percent) : .unplugged(percent: r.percent), seconds: 3)
             return
         }
         // Pin yếu: báo một lần khi xuống tới 20% và 10% lúc đang dùng pin.
-        if !ac, let last = lastPercent {
+        if !ac, Prefs.showLowBattery, let last = lastPercent {
             for mark in [20, 10] where last > mark && r.percent <= mark {
                 m.showTransient(.lowBattery(percent: r.percent), seconds: 5)
                 NSSound(named: NSSound.Name("Funk"))?.play()
@@ -2507,7 +2539,7 @@ final class NotchController {
     private var expandedRect: CGRect {
         let f = geo.screenFrame
         let w: CGFloat = NotchController.expandedWidth + 16 + 40
-        let h = geo.height + 214 + 30
+        let h = geo.height + 224 + 30
         return CGRect(x: f.midX - w / 2, y: f.maxY - h, width: w, height: h)
     }
 
@@ -2553,8 +2585,10 @@ final class NotchController {
         if let tab {
             model.tab = tab
         } else if !model.expanded && model.transient == nil && model.recording == nil {
-            // Đang hiện dạng gọn của hẹn giờ hoặc nhạc thì mở thẳng mục đó.
-            if model.timerCompact { model.tab = .timer } else if model.musicCompact { model.tab = .media }
+            // Đang hiện dạng gọn của hẹn giờ hoặc nhạc thì mở thẳng mục đó, không thì theo Cài đặt.
+            if model.timerCompact { model.tab = .timer }
+            else if model.musicCompact { model.tab = .media }
+            else if let t = Tab(rawValue: Prefs.defaultTab) { model.tab = t }
         }
         guard !model.expanded else { return }
         model.expanded = true
@@ -2622,6 +2656,896 @@ enum HotKey {
     }
 }
 
+// MARK: - Ngôn ngữ (theo ngôn ngữ của máy)
+
+func L(_ vi: String, _ en: String) -> String {
+    (Locale.preferredLanguages.first ?? "en").hasPrefix("vi") ? vi : en
+}
+
+// MARK: - Cài đặt
+
+enum UpdateFrequency: String, CaseIterable {
+    case daily, weekly, off
+    var title: String {
+        switch self {
+        case .daily: return L("Mỗi ngày", "Daily")
+        case .weekly: return L("Mỗi tuần", "Weekly")
+        case .off: return L("Tắt", "Off")
+        }
+    }
+    var interval: TimeInterval? {
+        switch self {
+        case .daily: return 20 * 3600
+        case .weekly: return 6.5 * 24 * 3600
+        case .off: return nil
+        }
+    }
+}
+
+enum UpdateMode: String, CaseIterable {
+    case auto, ask, notify
+    var shortTitle: String {
+        switch self {
+        case .auto: return L("Tự cập nhật", "Auto")
+        case .ask: return L("Hỏi trước", "Ask")
+        case .notify: return L("Chỉ báo", "Notify")
+        }
+    }
+}
+
+enum Prefs {
+    private static let d = UserDefaults.standard
+    private static func bool(_ k: String) -> Bool { d.object(forKey: k) as? Bool ?? true }
+
+    static var showMusic: Bool { bool("showMusic") }
+    static var showTimer: Bool { bool("showTimer") }
+    static var showRecording: Bool { bool("showRecording") }
+    static var showHeadphones: Bool { bool("showHeadphones") }
+    static var showCharging: Bool { bool("showCharging") }
+    static var showLowBattery: Bool { bool("showLowBattery") }
+    /// "last" = mục dùng gần nhất, hoặc tên một mục (Tab.rawValue).
+    static var defaultTab: String { d.string(forKey: "defaultTab") ?? "last" }
+
+    static var updateFrequency: UpdateFrequency {
+        get { UpdateFrequency(rawValue: d.string(forKey: "updateFrequency") ?? "") ?? .daily }
+        set { d.set(newValue.rawValue, forKey: "updateFrequency") }
+    }
+    static var updateMode: UpdateMode {
+        get { UpdateMode(rawValue: d.string(forKey: "updateMode") ?? "") ?? .ask }
+        set { d.set(newValue.rawValue, forKey: "updateMode") }
+    }
+    static var lastUpdateCheck: Date? {
+        get { d.object(forKey: "lastUpdateCheck") as? Date }
+        set { d.set(newValue, forKey: "lastUpdateCheck") }
+    }
+    static var justUpdatedFrom: String? {
+        get { d.string(forKey: "justUpdatedFrom") }
+        set { d.set(newValue, forKey: "justUpdatedFrom") }
+    }
+}
+
+// MARK: - Thông tin app
+
+enum AppInfo {
+    static var version: String { Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?" }
+    static var build: String { Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?" }
+    static let repoURL = URL(string: "https://github.com/PhuocRin/RinNotch")!
+    static let apiLatestRelease = URL(string: "https://api.github.com/repos/PhuocRin/RinNotch/releases/latest")!
+    static let webURL = URL(string: "https://phuocrin.com/rinnotch/")!
+    static let youtubeURL = URL(string: "https://youtube.com/@phuocrin")!
+    static let tiktokURL = URL(string: "https://www.tiktok.com/@phuocrinrin")!
+    static let facebookURL = URL(string: "https://www.facebook.com/phuocrinrin")!
+    static let email = "phuocrinrin@gmail.com"
+
+    static var macOS: String {
+        let v = ProcessInfo.processInfo.operatingSystemVersion
+        return "macOS \(v.majorVersion).\(v.minorVersion).\(v.patchVersion)"
+    }
+
+    static var chip: String {
+        var size = 0
+        sysctlbyname("machdep.cpu.brand_string", nil, &size, nil, 0)
+        guard size > 0 else { return "?" }
+        var buf = [CChar](repeating: 0, count: size)
+        sysctlbyname("machdep.cpu.brand_string", &buf, &size, nil, 0)
+        return String(cString: buf)
+    }
+
+    static func permission(_ s: AVAuthorizationStatus) -> String {
+        switch s {
+        case .authorized: return L("có", "yes")
+        case .denied, .restricted: return L("bị từ chối", "denied")
+        default: return L("chưa hỏi", "not asked")
+        }
+    }
+
+    /// Thông tin gửi kèm khi báo lỗi. Không có gì cá nhân.
+    @MainActor
+    static var diagnostics: String {
+        "RinNotch \(version) (\(build)) · \(macOS) · \(chip)\n"
+            + L("Quyền micro", "Microphone") + ": " + permission(AVCaptureDevice.authorizationStatus(for: .audio))
+            + " · " + L("Ký bằng chứng chỉ", "Certificate signed") + ": " + (UpdateSecurity.currentIsAdHoc ? L("không", "no") : L("có", "yes"))
+    }
+}
+
+// MARK: - Giao diện dùng chung (cửa sổ phụ)
+
+extension View {
+    func panelStyle(width: CGFloat = 340) -> some View {
+        self.padding(.horizontal, 26).padding(.top, 40).padding(.bottom, 26).frame(width: width)
+    }
+
+    func softCard(cornerRadius: CGFloat = 18) -> some View {
+        self
+            .background {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).fill(Color.primary.opacity(0.05))
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+            }
+    }
+
+    func glassButton(prominent: Bool = false) -> some View { modifier(GlassButton(prominent: prominent)) }
+
+    func noteText() -> some View {
+        self.font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+struct GlassButton: ViewModifier {
+    let prominent: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        #if compiler(>=6.2)
+        if #available(macOS 26.0, *) {
+            if prominent { content.buttonStyle(.glassProminent) } else { content.buttonStyle(.glass) }
+        } else {
+            fallback(content)
+        }
+        #else
+        fallback(content)
+        #endif
+    }
+
+    @ViewBuilder
+    private func fallback(_ content: Content) -> some View {
+        if prominent { content.buttonStyle(.borderedProminent) } else { content.buttonStyle(.bordered) }
+    }
+}
+
+struct GlassGroup<Content: View>: View {
+    var spacing: CGFloat = 10
+    @ViewBuilder var content: Content
+
+    @ViewBuilder
+    var body: some View {
+        #if compiler(>=6.2)
+        if #available(macOS 26.0, *) {
+            GlassEffectContainer(spacing: spacing) { content }
+        } else {
+            content
+        }
+        #else
+        content
+        #endif
+    }
+}
+
+struct AppIconView: View {
+    var size: CGFloat = 88
+    @ViewBuilder
+    var body: some View {
+        if let icon = NSImage(named: NSImage.applicationIconName) {
+            Image(nsImage: icon).resizable().frame(width: size, height: size)
+                .shadow(color: Color.black.opacity(0.25), radius: 14, y: 6)
+        }
+    }
+}
+
+@MainActor
+final class Panel {
+    private var window: NSWindow?
+    private let content: () -> AnyView
+
+    init(_ content: @escaping () -> AnyView) { self.content = content }
+
+    func close() { window?.close() }
+
+    func show() {
+        let controller = NSHostingController(rootView: content())
+        controller.sizingOptions = .preferredContentSize
+        if let w = window {
+            w.contentViewController = controller
+        } else {
+            let w = NSWindow(contentViewController: controller)
+            w.styleMask = [.titled, .closable, .fullSizeContentView]
+            w.titlebarAppearsTransparent = true
+            w.titleVisibility = .hidden
+            w.isMovableByWindowBackground = true
+            w.isReleasedWhenClosed = false
+            w.standardWindowButton(.miniaturizeButton)?.isHidden = true
+            w.standardWindowButton(.zoomButton)?.isHidden = true
+            window = w
+        }
+        if let w = window, !w.isVisible { w.center() }
+        NSApp.activate(ignoringOtherApps: true)
+        window?.makeKeyAndOrderFront(nil)
+    }
+}
+
+// MARK: - Cài đặt (cửa sổ)
+
+struct SettingsView: View {
+    @AppStorage("showMusic") private var showMusic = true
+    @AppStorage("showTimer") private var showTimer = true
+    @AppStorage("showRecording") private var showRecording = true
+    @AppStorage("showHeadphones") private var showHeadphones = true
+    @AppStorage("showCharging") private var showCharging = true
+    @AppStorage("showLowBattery") private var showLowBattery = true
+    @AppStorage("defaultTab") private var defaultTab = "last"
+    @State private var login = SMAppService.mainApp.status == .enabled
+
+    var body: some View {
+        VStack(spacing: 14) {
+            AppIconView(size: 64)
+            Text(L("Cài đặt RinNotch", "RinNotch Settings"))
+                .font(.system(size: 22, weight: .bold, design: .rounded))
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text(L("Hiện ở hai bên tai thỏ", "Show beside the notch")).font(.system(size: 12, weight: .semibold))
+                Toggle(L("Nhạc / video đang phát", "Now playing"), isOn: $showMusic)
+                Toggle(L("Hẹn giờ đang chạy", "Running timer"), isOn: $showTimer)
+                Toggle(L("App đang ghi âm (sóng âm)", "Apps recording audio"), isOn: $showRecording)
+            }
+            .toggleStyle(.switch)
+            .font(.system(size: 13))
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .softCard(cornerRadius: 16)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text(L("Thông báo thả xuống", "Drop-down alerts")).font(.system(size: 12, weight: .semibold))
+                Toggle(L("Tai nghe kết nối", "Headphones connected"), isOn: $showHeadphones)
+                Toggle(L("Cắm và rút sạc", "Charger plugged / unplugged"), isOn: $showCharging)
+                Toggle(L("Pin yếu 20% và 10%", "Low battery 20% and 10%"), isOn: $showLowBattery)
+            }
+            .toggleStyle(.switch)
+            .font(.system(size: 13))
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .softCard(cornerRadius: 16)
+
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text(L("Rê chuột lên tai thỏ thì mở", "On hover, open")).font(.system(size: 13))
+                    Spacer()
+                    Picker("", selection: $defaultTab) {
+                        Text(L("Mục dùng gần nhất", "Last used")).tag("last")
+                        ForEach(Tab.allCases) { t in Text(t.title).tag(t.rawValue) }
+                    }
+                    .labelsHidden()
+                    .frame(width: 170)
+                }
+                Toggle(L("Mở cùng máy", "Open at login"), isOn: $login)
+                    .toggleStyle(.switch)
+                    .font(.system(size: 13))
+                    .onChange(of: login) { on in
+                        do {
+                            if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
+                        } catch {
+                            login = SMAppService.mainApp.status == .enabled
+                        }
+                        AppDelegate.shared?.rebuildMenu()
+                    }
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .softCard(cornerRadius: 16)
+
+            Text(L("Phím tắt ⌥⌘N để ẩn / hiện RinNotch. Esc để thu tai thỏ lại.",
+                   "Press ⌥⌘N to hide / show RinNotch. Esc collapses the notch."))
+                .noteText()
+                .multilineTextAlignment(.center)
+        }
+        .panelStyle(width: 380)
+    }
+}
+
+// MARK: - Ủng hộ tác giả
+
+enum Support {
+    static let paypalURL = URL(string: "https://paypal.me/phuocrin")!
+    static var qrImage: NSImage? { Bundle.main.image(forResource: "donate-qr") }
+}
+
+struct SupportView: View {
+    private let qr = Support.qrImage
+
+    var body: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "heart.fill").font(.system(size: 34, weight: .semibold)).foregroundStyle(.pink)
+            Text(L("Ủng hộ tác giả", "Support the author")).font(.system(size: 22, weight: .bold, design: .rounded))
+            Text(qr != nil
+                 ? L("RinNotch miễn phí. Nếu app giúp ích cho bạn, bạn có thể ủng hộ Phước Rin bằng 1 trong 2 cách bên dưới.",
+                     "RinNotch is free. If it helps you, you can support Phước Rin in one of the two ways below.")
+                 : L("RinNotch miễn phí. Nếu app giúp ích cho bạn, bạn có thể ủng hộ Phước Rin qua PayPal.",
+                     "RinNotch is free. If it helps you, you can support Phước Rin via PayPal."))
+                .font(.system(size: 13)).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let qr {
+                VStack(alignment: .leading, spacing: 10) {
+                    Label(L("Cách 1 · Chuyển khoản ngân hàng", "Option 1 · Bank transfer (Vietnam)"), systemImage: "building.columns.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text(L("Dành cho bạn ở Việt Nam. Mở app ngân hàng bất kỳ, quét mã này.",
+                           "For users in Vietnam. Open any banking app and scan this code.")).noteText()
+                    Image(nsImage: qr).resizable().interpolation(.high).scaledToFit()
+                        .frame(width: 176, height: 176).padding(10)
+                        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(.white))
+                        .frame(maxWidth: .infinity).padding(.vertical, 2)
+                    Text(L("App ngân hàng sẽ hiện tên chủ tài khoản, bạn kiểm tra đúng tên trước khi chuyển nha.",
+                           "Your banking app will show the account holder's name. Please check it before sending.")).noteText()
+                }
+                .padding(16).frame(maxWidth: .infinity, alignment: .leading).softCard()
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                Label(qr != nil ? L("Cách 2 · PayPal", "Option 2 · PayPal") : "PayPal", systemImage: "globe")
+                    .font(.system(size: 13, weight: .semibold))
+                Text(L("Dành cho bạn ở nước ngoài hoặc có tài khoản PayPal.",
+                       "For users outside Vietnam, or anyone with a PayPal account.")).noteText()
+                Button {
+                    NSWorkspace.shared.open(Support.paypalURL)
+                } label: {
+                    Label(L("Ủng hộ qua PayPal", "Support via PayPal"), systemImage: "arrow.up.right")
+                        .font(.system(size: 13, weight: .semibold)).frame(maxWidth: .infinity).padding(.vertical, 4)
+                }
+                .glassButton(prominent: true).controlSize(.large)
+            }
+            .padding(16).frame(maxWidth: .infinity, alignment: .leading).softCard()
+
+            Text(L("Cảm ơn bạn đã dùng RinNotch 💙", "Thanks for using RinNotch 💙")).noteText()
+        }
+        .panelStyle(width: 360)
+    }
+}
+
+// MARK: - Giới thiệu
+
+struct AboutView: View {
+    var body: some View {
+        VStack(spacing: 12) {
+            AppIconView(size: 96)
+            Text("RinNotch").font(.system(size: 26, weight: .bold, design: .rounded))
+            Text(L("Phiên bản", "Version") + " \(AppInfo.version)")
+                .font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
+            Text(L("Biến tai thỏ MacBook thành khu tiện ích nhỏ: nhạc, kệ file, bộ nhớ tạm, ghi chú, hẹn giờ và thông báo thả xuống.",
+                   "Turns your MacBook notch into a small hub: music, file shelf, clipboard, notes, timer and drop-down alerts."))
+                .font(.system(size: 13)).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(spacing: 12) {
+                Text(L("Làm bởi Phước Rin", "Made by Phước Rin")).font(.system(size: 13, weight: .semibold))
+                GlassGroup(spacing: 10) {
+                    Grid(horizontalSpacing: 10, verticalSpacing: 10) {
+                        GridRow {
+                            link("YouTube", "play.rectangle.fill", AppInfo.youtubeURL)
+                            link("Facebook", "f.square.fill", AppInfo.facebookURL)
+                        }
+                        GridRow {
+                            link("TikTok", "music.note", AppInfo.tiktokURL)
+                            link("GitHub", "chevron.left.forwardslash.chevron.right", AppInfo.repoURL)
+                        }
+                        GridRow {
+                            link("phuocrin.com", "globe", AppInfo.webURL).gridCellColumns(2)
+                        }
+                    }
+                }
+            }
+            .padding(16).frame(maxWidth: .infinity).softCard().padding(.top, 6)
+
+            Text(L("Miễn phí · Mã nguồn mở (MIT)", "Free · Open source (MIT)")).noteText().padding(.top, 2)
+        }
+        .panelStyle()
+    }
+
+    private func link(_ title: String, _ symbol: String, _ url: URL) -> some View {
+        Button {
+            NSWorkspace.shared.open(url)
+        } label: {
+            Label(title, systemImage: symbol).font(.system(size: 12, weight: .medium)).frame(maxWidth: .infinity)
+        }
+        .glassButton().controlSize(.large)
+    }
+}
+
+// MARK: - Báo lỗi
+
+enum BugReport {
+    @MainActor
+    static var log: String { Diag.lines.isEmpty ? L("(chưa có nhật ký)", "(no log yet)") : Diag.lines.joined(separator: "\n") }
+
+    @MainActor
+    static var template: String {
+        L("Mô tả lỗi:", "What happened:") + "\n\n\n"
+            + L("Các bước để gặp lỗi:", "Steps to reproduce:") + "\n1. \n2. \n\n"
+            + "---\n" + AppInfo.diagnostics + "\n\n" + L("Nhật ký:", "Log:") + "\n" + log
+    }
+
+    @MainActor
+    static var emailURL: URL? {
+        var c = URLComponents()
+        c.scheme = "mailto"
+        c.path = AppInfo.email
+        c.queryItems = [
+            URLQueryItem(name: "subject", value: "[RinNotch \(AppInfo.version)] " + L("Báo lỗi", "Bug report")),
+            URLQueryItem(name: "body", value: template),
+        ]
+        return c.url
+    }
+
+    @MainActor
+    static var githubURL: URL? {
+        var c = URLComponents(string: "https://github.com/PhuocRin/RinNotch/issues/new")
+        c?.queryItems = [
+            URLQueryItem(name: "title", value: L("Báo lỗi: ", "Bug: ")),
+            URLQueryItem(name: "body", value: template),
+        ]
+        return c?.url
+    }
+}
+
+struct BugReportView: View {
+    private let info = AppInfo.diagnostics
+    @State private var copied = false
+
+    var body: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "ladybug.fill").font(.system(size: 32, weight: .semibold)).foregroundStyle(.orange)
+            Text(L("Báo lỗi", "Report a bug")).font(.system(size: 22, weight: .bold, design: .rounded))
+            Text(L("Gặp lỗi hay có gì chưa ổn? Bạn mô tả giúp mình nha, mình sẽ sửa ở bản sau.",
+                   "Found a bug or something off? Tell me what happened and I'll fix it in the next version."))
+                .font(.system(size: 13)).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(L("Thông tin gửi kèm", "Info included")).font(.system(size: 11, weight: .semibold))
+                Text(info).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
+                    .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                Text(L("Gồm phiên bản app, macOS, loại chip, quyền micro và nhật ký chẩn đoán gần nhất (tên app đang phát nhạc hoặc ghi âm, tên tai nghe). Không có thông tin cá nhân nào khác.",
+                       "App version, macOS, chip, microphone permission and the recent diagnostic log (names of apps playing or recording, headphone name). No other personal information."))
+                    .noteText().padding(.top, 2)
+            }
+            .padding(14).frame(maxWidth: .infinity, alignment: .leading).softCard(cornerRadius: 16)
+
+            GlassGroup(spacing: 10) {
+                VStack(spacing: 10) {
+                    Button {
+                        if let url = BugReport.emailURL { NSWorkspace.shared.open(url) }
+                    } label: {
+                        Label(L("Gửi qua email", "Send by email"), systemImage: "envelope.fill")
+                            .font(.system(size: 13, weight: .semibold)).frame(maxWidth: .infinity).padding(.vertical, 4)
+                    }
+                    .glassButton(prominent: true).controlSize(.large)
+
+                    HStack(spacing: 10) {
+                        Button {
+                            if let url = BugReport.githubURL { NSWorkspace.shared.open(url) }
+                        } label: {
+                            Text(L("Báo trên GitHub", "Report on GitHub")).frame(maxWidth: .infinity)
+                        }
+                        .glassButton()
+
+                        Button {
+                            let pb = NSPasteboard.general
+                            pb.clearContents()
+                            pb.setString(info + "\n\n" + BugReport.log, forType: .string)
+                            ClipboardWatcher.shared?.ignore(pb.changeCount)
+                            copied = true
+                        } label: {
+                            Text(copied ? L("Đã sao chép", "Copied") : L("Sao chép kèm nhật ký", "Copy with log")).frame(maxWidth: .infinity)
+                        }
+                        .glassButton()
+                    }
+                    .font(.system(size: 12)).controlSize(.large)
+                }
+            }
+        }
+        .panelStyle()
+    }
+}
+
+// MARK: - Cập nhật
+
+/// Kiểm tra gói cập nhật có đúng do Phước Rin phát hành không (cùng khoá với RinDock).
+enum UpdateSecurity {
+    static let publicKeyBase64 = "cp4+XU5KBpctbtgRelU5WVsCOlPVuVl2X71we0GpjW0="
+
+    static func verify(_ data: Data, signature: Data) -> Bool {
+        guard let raw = Data(base64Encoded: publicKeyBase64),
+              let key = try? Curve25519.Signing.PublicKey(rawRepresentation: raw) else { return false }
+        return key.isValidSignature(signature, for: data)
+    }
+
+    static func currentRequirement() -> SecRequirement? {
+        var code: SecCode?
+        guard SecCodeCopySelf([], &code) == errSecSuccess, let code else { return nil }
+        var staticCode: SecStaticCode?
+        guard SecCodeCopyStaticCode(code, [], &staticCode) == errSecSuccess, let staticCode else { return nil }
+        var req: SecRequirement?
+        guard SecCodeCopyDesignatedRequirement(staticCode, [], &req) == errSecSuccess else { return nil }
+        return req
+    }
+
+    static var currentIsAdHoc: Bool {
+        guard let req = currentRequirement() else { return true }
+        var text: CFString?
+        SecRequirementCopyString(req, [], &text)
+        return (text as String?)?.contains("cdhash") ?? true
+    }
+
+    static let developerIDRequirement: SecRequirement? = {
+        let text = "anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists "
+            + "and certificate leaf[field.1.2.840.113635.100.6.1.13] exists"
+        var req: SecRequirement?
+        guard SecRequirementCreateWithString(text as CFString, [], &req) == errSecSuccess else { return nil }
+        return req
+    }()
+
+    static func newAppIsTrusted(_ url: URL) -> Bool {
+        var code: SecStaticCode?
+        guard SecStaticCodeCreateWithPath(url as CFURL, [], &code) == errSecSuccess, let code else { return false }
+        let flags = SecCSFlags(rawValue: kSecCSCheckAllArchitectures | kSecCSCheckNestedCode | kSecCSStrictValidate)
+        if currentIsAdHoc { return SecStaticCodeCheckValidity(code, flags, nil) == errSecSuccess }
+        if let same = currentRequirement(), SecStaticCodeCheckValidity(code, flags, same) == errSecSuccess { return true }
+        if let devID = developerIDRequirement, SecStaticCodeCheckValidity(code, flags, devID) == errSecSuccess { return true }
+        return false
+    }
+}
+
+enum UpdateError: Error {
+    case missingPackage, badSignature, badApp, notWritable, failed(String)
+
+    var message: String {
+        switch self {
+        case .missingPackage:
+            return L("Bản này chưa có gói tự cập nhật. Bạn tải thủ công giúp mình nha.",
+                     "This version has no auto-update package. Please download it manually.")
+        case .badSignature:
+            return L("Gói tải về không đúng chữ ký của Phước Rin nên RinNotch không cài.",
+                     "The downloaded package isn't signed by Phước Rin, so RinNotch won't install it.")
+        case .badApp:
+            return L("App trong gói cập nhật không hợp lệ nên RinNotch không cài.",
+                     "The app inside the update package isn't valid, so RinNotch won't install it.")
+        case .notWritable:
+            return L("RinNotch chỉ tự cập nhật được khi nằm trong thư mục Applications. Bạn kéo RinNotch vào Applications rồi thử lại nha.",
+                     "RinNotch can only update itself from the Applications folder. Move it there and try again.")
+        case .failed(let detail):
+            return L("Có lỗi khi cập nhật: ", "Update failed: ") + detail
+        }
+    }
+}
+
+@MainActor
+final class Updater: ObservableObject {
+    struct Asset: Decodable, Equatable {
+        let name: String
+        let browser_download_url: URL
+    }
+
+    struct Release: Decodable, Equatable {
+        let tag_name: String
+        let html_url: URL
+        let body: String?
+        let assets: [Asset]
+
+        var version: String { tag_name.trimmingCharacters(in: CharacterSet(charactersIn: "vV ")) }
+        var notes: String { body ?? "" }
+        var zipURL: URL? { assets.first { $0.name.hasSuffix(".zip") }?.browser_download_url }
+        var sigURL: URL? { assets.first { $0.name.hasSuffix(".zip.sig") }?.browser_download_url }
+        var canAutoInstall: Bool { zipURL != nil && sigURL != nil }
+    }
+
+    enum State: Equatable {
+        case idle, checking, upToDate, failed
+        case available(Release)
+        case downloading(Release)
+        case installing(Release)
+        case installFailed(Release, String)
+        case updated(from: String)
+    }
+
+    @Published private(set) var state: State = .idle
+    var onChange: (@MainActor () -> Void)?
+    var onFoundInBackground: (@MainActor (Release) -> Void)?
+    var onInstallFailed: (@MainActor () -> Void)?
+
+    var available: Release? {
+        switch state {
+        case let .available(r), let .installFailed(r, _): return r
+        default: return nil
+        }
+    }
+
+    var isBusy: Bool {
+        switch state {
+        case .checking, .downloading, .installing: return true
+        default: return false
+        }
+    }
+
+    func noteJustUpdated() -> Bool {
+        guard let from = Prefs.justUpdatedFrom else { return false }
+        Prefs.justUpdatedFrom = nil
+        guard from != AppInfo.version else { return false }
+        state = .updated(from: from)
+        return true
+    }
+
+    func checkIfDue() {
+        guard let interval = Prefs.updateFrequency.interval else { return }
+        if let last = Prefs.lastUpdateCheck, Date().timeIntervalSince(last) < interval { return }
+        check(background: true)
+    }
+
+    func check(background: Bool = false) {
+        if isBusy { return }
+        if !background { state = .checking }
+        Task { await run(background: background) }
+    }
+
+    private func run(background: Bool) async {
+        var req = URLRequest(url: AppInfo.apiLatestRelease, timeoutInterval: 15)
+        req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        req.setValue("RinNotch/\(AppInfo.version)", forHTTPHeaderField: "User-Agent")
+        do {
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            guard (resp as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
+            let rel = try JSONDecoder().decode(Release.self, from: data)
+            Prefs.lastUpdateCheck = Date()
+            if Updater.isNewer(rel.version, than: AppInfo.version) {
+                if background, available?.version == rel.version { return }
+                state = .available(rel)
+                onChange?()
+                if background { onFoundInBackground?(rel) }
+                return
+            }
+            if !background { state = .upToDate }
+        } catch {
+            if !background { state = .failed }
+        }
+        onChange?()
+    }
+
+    func install(_ rel: Release) {
+        switch state {
+        case .downloading, .installing: return
+        default: break
+        }
+        Task { await performInstall(rel) }
+    }
+
+    private func performInstall(_ rel: Release) async {
+        do {
+            guard let zipURL = rel.zipURL, let sigURL = rel.sigURL else { throw UpdateError.missingPackage }
+            state = .downloading(rel)
+            onChange?()
+            let (zipData, zipResp) = try await URLSession.shared.data(from: zipURL)
+            let (sigData, sigResp) = try await URLSession.shared.data(from: sigURL)
+            guard (zipResp as? HTTPURLResponse)?.statusCode == 200,
+                  (sigResp as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
+            let sigText = String(decoding: sigData, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let signature = Data(base64Encoded: sigText),
+                  UpdateSecurity.verify(zipData, signature: signature) else { throw UpdateError.badSignature }
+            state = .installing(rel)
+            let newApp = try await Task.detached { () throws -> URL in try Installer.unpack(zipData) }.value
+            guard Installer.bundleID(of: newApp) == Bundle.main.bundleIdentifier,
+                  UpdateSecurity.newAppIsTrusted(newApp) else { throw UpdateError.badApp }
+            try Installer.replaceAndRelaunch(with: newApp)
+        } catch let e as UpdateError {
+            state = .installFailed(rel, e.message)
+        } catch {
+            state = .installFailed(rel, UpdateError.failed(error.localizedDescription).message)
+        }
+        onChange?()
+        onInstallFailed?()
+    }
+
+    nonisolated static func isNewer(_ a: String, than b: String) -> Bool {
+        let pa = a.split(separator: ".").map { Int($0) ?? 0 }
+        let pb = b.split(separator: ".").map { Int($0) ?? 0 }
+        for i in 0..<max(pa.count, pb.count) {
+            let x = i < pa.count ? pa[i] : 0
+            let y = i < pb.count ? pb[i] : 0
+            if x != y { return x > y }
+        }
+        return false
+    }
+}
+
+enum Installer {
+    static func unpack(_ zipData: Data) throws -> URL {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent("RinNotchUpdate-\(UUID().uuidString)")
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        let zip = dir.appendingPathComponent("update.zip")
+        try zipData.write(to: zip)
+        let out = dir.appendingPathComponent("unpacked")
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        p.arguments = ["-x", "-k", zip.path, out.path]
+        try p.run()
+        p.waitUntilExit()
+        guard p.terminationStatus == 0 else { throw UpdateError.failed("ditto \(p.terminationStatus)") }
+        let app = out.appendingPathComponent("RinNotch.app")
+        guard fm.fileExists(atPath: app.path) else { throw UpdateError.badApp }
+        return app
+    }
+
+    static func bundleID(of app: URL) -> String? { Bundle(url: app)?.bundleIdentifier }
+
+    @MainActor
+    static func replaceAndRelaunch(with newApp: URL) throws {
+        let fm = FileManager.default
+        let current = Bundle.main.bundleURL
+        let parent = current.deletingLastPathComponent()
+        guard !current.path.contains("/AppTranslocation/"),
+              fm.isWritableFile(atPath: parent.path),
+              fm.isWritableFile(atPath: current.path) else { throw UpdateError.notWritable }
+        Prefs.justUpdatedFrom = AppInfo.version
+        let pid = ProcessInfo.processInfo.processIdentifier
+        let script = """
+        while /bin/kill -0 \(pid) 2>/dev/null; do /bin/sleep 0.2; done
+        /bin/rm -rf "$1.old"
+        if /bin/mv "$1" "$1.old"; then
+          if /bin/mv "$2" "$1"; then /bin/rm -rf "$1.old"; else /bin/mv "$1.old" "$1"; fi
+        fi
+        /usr/bin/xattr -dr com.apple.quarantine "$1" 2>/dev/null
+        /usr/bin/open "$1"
+        """
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/sh")
+        p.arguments = ["-c", script, "rinnotch-update", current.path, newApp.path]
+        do {
+            try p.run()
+        } catch {
+            Prefs.justUpdatedFrom = nil
+            throw UpdateError.failed(error.localizedDescription)
+        }
+        NSApp.terminate(nil)
+    }
+}
+
+struct UpdateView: View {
+    @ObservedObject var updater: Updater
+    @AppStorage("updateFrequency") private var frequency: UpdateFrequency = .daily
+    @AppStorage("updateMode") private var mode: UpdateMode = .ask
+
+    var body: some View {
+        VStack(spacing: 14) {
+            AppIconView(size: 76)
+            switch updater.state {
+            case .idle:
+                title(L("Kiểm tra cập nhật", "Check for updates"))
+                Text("RinNotch \(AppInfo.version)").font(.system(size: 12)).foregroundStyle(.secondary)
+                Button(L("Kiểm tra ngay", "Check now")) { updater.check() }.glassButton(prominent: true)
+            case .checking:
+                ProgressView().controlSize(.small)
+                Text(L("Đang kiểm tra bản mới…", "Checking for updates…")).font(.system(size: 13)).foregroundStyle(.secondary)
+            case .upToDate:
+                title(L("Bạn đang dùng bản mới nhất", "You're on the latest version"))
+                Text("RinNotch \(AppInfo.version)").font(.system(size: 12)).foregroundStyle(.secondary)
+            case .failed:
+                title(L("Chưa kiểm tra được", "Couldn't check"))
+                Text(L("Bạn kiểm tra kết nối mạng rồi thử lại nha.", "Check your internet connection and try again."))
+                    .font(.system(size: 13)).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                Button(L("Thử lại", "Try again")) { updater.check() }.glassButton().controlSize(.large)
+            case let .available(rel):
+                title(L("Có bản mới RinNotch \(rel.version)", "RinNotch \(rel.version) is available"))
+                Text(L("Bạn đang dùng bản \(AppInfo.version)", "You're on version \(AppInfo.version)"))
+                    .font(.system(size: 12)).foregroundStyle(.secondary)
+                notesBox(rel.notes)
+                actions(for: rel)
+            case let .downloading(rel):
+                ProgressView().controlSize(.small)
+                title(L("Đang tải RinNotch \(rel.version)…", "Downloading RinNotch \(rel.version)…"))
+            case let .installing(rel):
+                ProgressView().controlSize(.small)
+                title(L("Đang cài RinNotch \(rel.version)…", "Installing RinNotch \(rel.version)…"))
+                Text(L("RinNotch sẽ tự đóng và mở lại trong vài giây.", "RinNotch will quit and reopen in a few seconds."))
+                    .noteText().multilineTextAlignment(.center)
+            case let .installFailed(rel, reason):
+                title(L("Chưa cập nhật được", "Couldn't update"))
+                Text(reason).font(.system(size: 13)).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                actions(for: rel)
+            case let .updated(from):
+                Image(systemName: "checkmark.seal.fill").font(.system(size: 26, weight: .semibold)).foregroundStyle(.green)
+                title(L("Đã cập nhật lên RinNotch \(AppInfo.version)", "Updated to RinNotch \(AppInfo.version)"))
+                Text(L("Từ bản \(from)", "From version \(from)")).font(.system(size: 12)).foregroundStyle(.secondary)
+            }
+            settings
+        }
+        .panelStyle(width: 360)
+    }
+
+    private func title(_ text: String) -> some View {
+        Text(text).font(.system(size: 19, weight: .bold, design: .rounded))
+            .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+    }
+
+    @ViewBuilder
+    private func notesBox(_ notes: String) -> some View {
+        if !notes.isEmpty {
+            ScrollView {
+                Text(notes).font(.system(size: 12)).frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
+            }
+            .frame(maxHeight: 140).padding(14).softCard(cornerRadius: 16)
+        }
+    }
+
+    @ViewBuilder
+    private func actions(for rel: Updater.Release) -> some View {
+        GlassGroup(spacing: 10) {
+            VStack(spacing: 10) {
+                if rel.canAutoInstall {
+                    Button {
+                        updater.install(rel)
+                    } label: {
+                        Label(L("Cập nhật ngay", "Update now"), systemImage: "arrow.down.circle.fill")
+                            .font(.system(size: 13, weight: .semibold)).frame(maxWidth: .infinity).padding(.vertical, 4)
+                    }
+                    .glassButton(prominent: true).controlSize(.large)
+                    Button {
+                        NSWorkspace.shared.open(rel.html_url)
+                    } label: {
+                        Text(L("Tải thủ công", "Download manually")).font(.system(size: 12)).frame(maxWidth: .infinity)
+                    }
+                    .glassButton().controlSize(.large)
+                } else {
+                    Button {
+                        NSWorkspace.shared.open(rel.html_url)
+                    } label: {
+                        Label(L("Tải bản mới", "Download update"), systemImage: "arrow.down.circle.fill")
+                            .font(.system(size: 13, weight: .semibold)).frame(maxWidth: .infinity).padding(.vertical, 4)
+                    }
+                    .glassButton(prominent: true).controlSize(.large)
+                }
+            }
+        }
+        if UpdateSecurity.currentIsAdHoc && rel.canAutoInstall {
+            Text(L("Lần cập nhật này macOS có thể hỏi lại quyền micro, Notes, Music một lần. Từ bản sau thì không cần nữa.",
+                   "After this update macOS may ask again for microphone, Notes and Music access once. Future updates won't."))
+                .noteText().multilineTextAlignment(.center)
+        }
+    }
+
+    private var settings: some View {
+        VStack(spacing: 10) {
+            VStack(spacing: 6) {
+                Text(L("Tự kiểm tra cập nhật", "Check for updates")).font(.system(size: 12, weight: .semibold))
+                Picker("", selection: $frequency) {
+                    ForEach(UpdateFrequency.allCases, id: \.self) { f in Text(f.title).tag(f) }
+                }
+                .pickerStyle(.segmented).labelsHidden()
+                .onChange(of: frequency) { _ in updater.checkIfDue() }
+            }
+            VStack(spacing: 6) {
+                Text(L("Khi có bản mới", "When an update is available")).font(.system(size: 12, weight: .semibold))
+                Picker("", selection: $mode) {
+                    ForEach(UpdateMode.allCases, id: \.self) { m in Text(m.shortTitle).tag(m) }
+                }
+                .pickerStyle(.segmented).labelsHidden().disabled(frequency == .off)
+            }
+            Text(L("Chỉ hỏi GitHub có bản mới không, không gửi thông tin gì của bạn.",
+                   "It only asks GitHub for new versions; nothing about you is sent."))
+                .noteText().multilineTextAlignment(.center)
+        }
+        .padding(14).frame(maxWidth: .infinity).softCard(cornerRadius: 16).padding(.top, 4)
+    }
+}
+
 // MARK: - App
 
 @MainActor
@@ -2629,10 +3553,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static var shared: AppDelegate?
 
     let model = NotchModel()
+    let updater = Updater()
     var controller: NotchController!
     var statusItem: NSStatusItem!
     var headphones: HeadphoneWatcher?
     var recording: RecordingWatcher?
+    private var updateTimer: Timer?
+
+    lazy var settingsPanel = Panel { AnyView(SettingsView()) }
+    lazy var aboutPanel = Panel { AnyView(AboutView()) }
+    lazy var supportPanel = Panel { AnyView(SupportView()) }
+    lazy var bugPanel = Panel { AnyView(BugReportView()) }
+    lazy var updatePanel = Panel { [unowned self] in AnyView(UpdateView(updater: self.updater)) }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self
@@ -2647,52 +3579,91 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppMusicBridge.shared = AppMusicBridge()
         HotKey.register()
         setupStatusItem()
+        setupUpdater()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         MediaWatcher.shared?.stop()
     }
 
+    // MARK: Cập nhật
+
+    private func setupUpdater() {
+        updater.onChange = { [weak self] in self?.rebuildMenu() }
+        updater.onFoundInBackground = { [weak self] rel in
+            guard let self else { return }
+            switch Prefs.updateMode {
+            case .auto: self.updater.install(rel)
+            case .ask: self.updatePanel.show()
+            case .notify: self.rebuildMenu()
+            }
+        }
+        updater.onInstallFailed = { [weak self] in self?.updatePanel.show() }
+        if updater.noteJustUpdated() { updatePanel.show() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
+            MainActor.assumeIsolated { self?.updater.checkIfDue() }
+        }
+        updateTimer = Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.updater.checkIfDue() }
+        }
+    }
+
+    // MARK: Thanh menu
+
     func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        if let b = statusItem.button {
-            let img = NSImage(named: "MenuBarIcon")
-                ?? NSImage(systemSymbolName: "rectangle.topthird.inset.filled", accessibilityDescription: "RinNotch")
-            img?.isTemplate = true
-            img?.size = NSSize(width: 18, height: 18)
-            b.image = img
-        }
         rebuildMenu()
     }
 
+    private func menuIcon() -> NSImage? {
+        let name = updater.available != nil ? "MenuBarIconUpdate" : "MenuBarIcon"
+        let img = NSImage(named: name) ?? NSImage(named: "MenuBarIcon")
+            ?? NSImage(systemSymbolName: "rectangle.topthird.inset.filled", accessibilityDescription: "RinNotch")
+        img?.isTemplate = true
+        img?.size = NSSize(width: 18, height: 18)
+        return img
+    }
+
+    private func item(_ title: String, _ action: Selector, key: String = "") -> NSMenuItem {
+        let i = NSMenuItem(title: title, action: action, keyEquivalent: key)
+        i.target = self
+        return i
+    }
+
     func rebuildMenu() {
+        statusItem.button?.image = menuIcon()
         let menu = NSMenu()
-        let hide = NSMenuItem(title: model.hidden ? "Hiện RinNotch" : "Ẩn RinNotch", action: #selector(toggleHiddenAction), keyEquivalent: "n")
-        hide.keyEquivalentModifierMask = [.command, .option]
-        hide.target = self
-        menu.addItem(hide)
-        menu.addItem(.separator())
-        for t in Tab.allCases {
-            let item = NSMenuItem(title: "Mở \(t.title)", action: #selector(openTab(_:)), keyEquivalent: "")
-            item.representedObject = t.rawValue
-            item.target = self
-            menu.addItem(item)
+        if let rel = updater.available {
+            let u = item(L("⬆︎ Có bản mới RinNotch \(rel.version)…", "⬆︎ RinNotch \(rel.version) available…"), #selector(showUpdate))
+            menu.addItem(u)
+            menu.addItem(.separator())
         }
+        let hide = item(model.hidden ? L("Hiện RinNotch", "Show RinNotch") : L("Ẩn RinNotch", "Hide RinNotch"),
+                        #selector(toggleHiddenAction), key: "n")
+        hide.keyEquivalentModifierMask = [.command, .option]
+        menu.addItem(hide)
+
+        let open = NSMenuItem(title: L("Mở mục", "Open"), action: nil, keyEquivalent: "")
+        let sub = NSMenu()
+        for t in Tab.allCases {
+            let i = item(t.title, #selector(openTab(_:)))
+            i.image = NSImage(systemSymbolName: t.symbol, accessibilityDescription: nil)
+            i.representedObject = t.rawValue
+            sub.addItem(i)
+        }
+        open.submenu = sub
+        menu.addItem(open)
         menu.addItem(.separator())
-        let login = NSMenuItem(title: "Mở cùng máy", action: #selector(toggleLogin), keyEquivalent: "")
-        login.state = SMAppService.mainApp.status == .enabled ? .on : .off
-        login.target = self
-        menu.addItem(login)
-        let ver = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
-        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
-        let about = NSMenuItem(title: "RinNotch \(ver) (\(build)) · Phước Rin", action: nil, keyEquivalent: "")
-        about.isEnabled = false
-        menu.addItem(about)
-        let diag = NSMenuItem(title: "Sao chép nhật ký chẩn đoán", action: #selector(copyDiag), keyEquivalent: "")
-        diag.target = self
-        menu.addItem(diag)
+
+        menu.addItem(item(L("Cài đặt…", "Settings…"), #selector(showSettings), key: ","))
+        menu.addItem(item(L("Kiểm tra cập nhật…", "Check for Updates…"), #selector(showUpdate)))
         menu.addItem(.separator())
-        let quit = NSMenuItem(title: "Thoát RinNotch", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        menu.addItem(item(L("Giới thiệu RinNotch", "About RinNotch"), #selector(showAbout)))
+        menu.addItem(item(L("Báo lỗi…", "Report a Bug…"), #selector(showBug)))
+        menu.addItem(item(L("Sao chép nhật ký chẩn đoán", "Copy Diagnostic Log"), #selector(copyDiag)))
+        menu.addItem(item(L("♥ Ủng hộ tác giả…", "♥ Support the Author…"), #selector(showSupport)))
+        menu.addItem(.separator())
+        let quit = NSMenuItem(title: L("Thoát RinNotch", "Quit RinNotch"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quit)
         statusItem.menu = menu
     }
@@ -2710,30 +3681,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.expand(tab: t)
     }
 
+    @objc func showSettings() { settingsPanel.show() }
+    @objc func showAbout() { aboutPanel.show() }
+    @objc func showSupport() { supportPanel.show() }
+    @objc func showBug() { bugPanel.show() }
+    @objc func showUpdate() {
+        if updater.available == nil, !updater.isBusy { updater.check() }
+        updatePanel.show()
+    }
+
     @objc func copyDiag() {
-        let os = ProcessInfo.processInfo.operatingSystemVersionString
-        let ver = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
-        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
-        let mic = AVCaptureDevice.authorizationStatus(for: .audio).rawValue
-        var text = "RinNotch \(ver) (\(build)) · macOS \(os) · quyền micro: \(mic)\n"
-        text += Diag.lines.isEmpty ? "(chưa có nhật ký)" : Diag.lines.joined(separator: "\n")
+        let text = AppInfo.diagnostics + "\n\n" + BugReport.log
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(text, forType: .string)
         ClipboardWatcher.shared?.ignore(pb.changeCount)
-    }
-
-    @objc func toggleLogin() {
-        do {
-            if SMAppService.mainApp.status == .enabled {
-                try SMAppService.mainApp.unregister()
-            } else {
-                try SMAppService.mainApp.register()
-            }
-        } catch {
-            NSSound.beep()
-        }
-        rebuildMenu()
     }
 }
 

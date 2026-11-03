@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36">
+  <mask id="m"><rect width="36" height="36" fill="#fff"/><circle cx="31" cy="7" r="7.5" fill="#000"/></mask>
+  <g mask="url(#m)">
+    <rect x="3.3" y="7.3" width="29.4" height="21.4" rx="4.5" fill="none" stroke="#000" stroke-width="2.6"/>
+    <path d="M10 7 L26 7 L26 13.5 Q26 18 21.5 18 L14.5 18 Q10 18 10 13.5 Z" fill="#000"/>
+  </g>
+  <circle cx="31" cy="7" r="4.6" fill="#000"/>
+</svg>
