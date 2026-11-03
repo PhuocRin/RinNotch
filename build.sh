@@ -50,10 +50,9 @@ echo "✓ Xong: ${APP}"
 
 if [[ "${1:-}" == "dmg" ]]; then
   DMG="build/RinNotch-${VERSION}.dmg"
-  STAGE="build/dmg"
-  mkdir -p "${STAGE}"
-  cp -R "${APP}" "${STAGE}/"
-  ln -s /Applications "${STAGE}/Applications"
-  hdiutil create -volname "RinNotch" -srcfolder "${STAGE}" -ov -format UDZO "${DMG}"
+  echo "→ Đang tạo file cài .dmg…"
+  python3 -m venv build/.venv
+  build/.venv/bin/pip install --quiet --disable-pip-version-check dmgbuild
+  build/.venv/bin/dmgbuild -s dmg_settings.py -D app="${APP}" "RinNotch" "${DMG}"
   echo "✓ File cài: ${DMG}"
 fi
