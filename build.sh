@@ -26,8 +26,9 @@ done
 lipo -create build/obj/RinNotch-arm64 build/obj/RinNotch-x86_64 -output "${APP}/Contents/MacOS/RinNotch"
 cp Info.plist "${APP}/Contents/Info.plist"
 
-# Icon app
+# Icon app + icon thanh menu (đơn sắc, tự đổi theo nền sáng/tối)
 iconutil -c icns assets/AppIcon.iconset -o "${APP}/Contents/Resources/AppIcon.icns"
+cp assets/menubar/MenuBarIcon*.png "${APP}/Contents/Resources/"
 
 # Trình đọc "Đang phát" (chạy qua /usr/bin/perl, xem Helper/rinmedia.m)
 xcrun clang -dynamiclib -fobjc-arc -O2 -arch arm64 -arch x86_64 -mmacosx-version-min=14.0 \

@@ -1222,7 +1222,7 @@ struct ShelfView: View {
                     }
                 }
                 HStack(spacing: 8) {
-                    Text("Kéo ra để sao chép · chuột phải để xem thêm")
+                    Text("Kéo ra = sao chép · giữ ⌘ = chuyển · chuột phải: thêm")
                         .font(.system(size: 11)).foregroundStyle(.white.opacity(0.55))
                     Spacer()
                     Button("AirDrop") { Actions.airDrop(m.shelf) }.buttonStyle(PillButton(prominent: true))
@@ -1252,20 +1252,112 @@ struct ShelfItem: View {
         .padding(7)
         .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.07)))
         .opacity(exists ? 1 : 0.45)
+        .overlay(FileDragArea(url: url, m: m))
         .help(url.path)
-        .onTapGesture(count: 2) { if exists { NSWorkspace.shared.open(url) } }
-        .onDrag {
-            m.draggingOut = true
-            return NSItemProvider(contentsOf: url) ?? NSItemProvider()
-        }
-        .contextMenu {
-            Button("Gửi AirDrop") { Actions.airDrop([url]) }
-            Button("Sao chép") { Actions.copyFiles([url]) }
-            Button("Hiện trong Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
-            Divider()
-            Button("Bỏ khỏi kệ") { m.removeFromShelf(url) }
-        }
     }
+}
+
+/// Vùng kéo file ra khỏi kệ: kéo thường = sao chép, giữ ⌘ khi kéo = chuyển file.
+/// Bấm đúp để mở, chuột phải để xem thêm.
+struct FileDragArea: NSViewRepresentable {
+    let url: URL
+    let m: NotchModel
+
+    func makeNSView(context: Context) -> FileDragNSView {
+        let v = FileDragNSView()
+        update(v)
+        return v
+    }
+
+    func updateNSView(_ v: FileDragNSView, context: Context) { update(v) }
+
+    private func update(_ v: FileDragNSView) {
+        v.url = url
+        let model = m
+        let u = url
+        v.onStart = { model.draggingOut = true }
+        v.onEnd = { moved in
+            model.draggingOut = false
+            if moved {
+                model.removeFromShelf(u)
+                Diag.log("Đã chuyển \(u.lastPathComponent) ra khỏi kệ")
+            }
+        }
+        v.onRemove = { model.removeFromShelf(u) }
+    }
+}
+
+final class FileDragNSView: NSView, NSDraggingSource {
+    var url = URL(fileURLWithPath: "/")
+    var onStart: (() -> Void)?
+    var onEnd: ((Bool) -> Void)?
+    var onRemove: (() -> Void)?
+    private var downEvent: NSEvent?
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        if event.clickCount == 2 {
+            if FileManager.default.fileExists(atPath: url.path) { NSWorkspace.shared.open(url) }
+            downEvent = nil
+            return
+        }
+        downEvent = event
+    }
+
+    override func mouseUp(with event: NSEvent) { downEvent = nil }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let down = downEvent, FileManager.default.fileExists(atPath: url.path) else { return }
+        let dx = event.locationInWindow.x - down.locationInWindow.x
+        let dy = event.locationInWindow.y - down.locationInWindow.y
+        guard dx * dx + dy * dy > 16 else { return }
+        downEvent = nil
+        let item = NSDraggingItem(pasteboardWriter: url as NSURL)
+        let icon = NSWorkspace.shared.icon(forFile: url.path)
+        icon.size = NSSize(width: 56, height: 56)
+        let p = convert(down.locationInWindow, from: nil)
+        item.setDraggingFrame(NSRect(x: p.x - 28, y: p.y - 28, width: 56, height: 56), contents: icon)
+        onStart?()
+        beginDraggingSession(with: [item], event: down, source: self)
+    }
+
+    func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
+        if context == .withinApplication { return [] }
+        // Mặc định sao chép; giữ ⌘ thì cho phép chuyển (Finder sẽ dời file đi).
+        return NSEvent.modifierFlags.contains(.command) ? [.move, .generic] : .copy
+    }
+
+    func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
+        let moved = operation.contains(.move) || operation.contains(.generic)
+        // Chỉ coi là đã chuyển khi file gốc thật sự không còn ở chỗ cũ.
+        let gone = !FileManager.default.fileExists(atPath: url.path)
+        onEnd?(moved && gone)
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let menu = NSMenu()
+        let u = url
+        menu.addItem(ClosureMenuItem("Mở") { NSWorkspace.shared.open(u) })
+        menu.addItem(ClosureMenuItem("Gửi AirDrop") { Actions.airDrop([u]) })
+        menu.addItem(ClosureMenuItem("Sao chép") { Actions.copyFiles([u]) })
+        menu.addItem(ClosureMenuItem("Hiện trong Finder") { NSWorkspace.shared.activateFileViewerSelecting([u]) })
+        menu.addItem(.separator())
+        let remove = onRemove
+        menu.addItem(ClosureMenuItem("Bỏ khỏi kệ") { remove?() })
+        return menu
+    }
+}
+
+final class ClosureMenuItem: NSMenuItem {
+    private let handler: () -> Void
+    init(_ title: String, handler: @escaping () -> Void) {
+        self.handler = handler
+        super.init(title: title, action: #selector(run), keyEquivalent: "")
+        target = self
+    }
+    required init(coder: NSCoder) { fatalError() }
+    @objc private func run() { handler() }
 }
 
 /// Ảnh xem trước của file (ảnh, video, PDF…) qua QuickLook; chưa có thì dùng icon file.
@@ -2564,8 +2656,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let b = statusItem.button {
-            b.image = NSImage(systemSymbolName: "rectangle.topthird.inset.filled", accessibilityDescription: "RinNotch")
-            b.image?.isTemplate = true
+            let img = NSImage(named: "MenuBarIcon")
+                ?? NSImage(systemSymbolName: "rectangle.topthird.inset.filled", accessibilityDescription: "RinNotch")
+            img?.isTemplate = true
+            img?.size = NSSize(width: 18, height: 18)
+            b.image = img
         }
         rebuildMenu()
     }
