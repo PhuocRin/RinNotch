@@ -15,7 +15,7 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.4</string>
+	<string>0.5</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>LSMinimumSystemVersion</key>
@@ -31,7 +31,7 @@
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>RinNotch đọc phần trăm pin tai nghe Bluetooth để hiện trên tai thỏ khi tai nghe kết nối.</string>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>RinNotch lưu ghi chú nhanh vào app Notes, trong thư mục RinNotch.</string>
+	<string>RinNotch lưu ghi chú nhanh vào app Notes, và hỏi Apple Music, Spotify đang phát bài gì để hiện trên tai thỏ.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Phước Rin</string>
 </dict>

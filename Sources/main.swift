@@ -803,7 +803,7 @@ struct MediaView: View {
                                     }
                                     .contentShape(Rectangle())
                                     .onTapGesture { loc in
-                                        MediaWatcher.shared?.send("seek \(Double(loc.x / g.size.width) * np.duration)")
+                                        MediaHub.shared?.command("seek \(Double(loc.x / g.size.width) * np.duration)")
                                     }
                                 }
                                 .frame(height: 5)
@@ -818,9 +818,9 @@ struct MediaView: View {
                         }
                     }
                     HStack(spacing: 22) {
-                        mediaButton("backward.fill", size: 17) { MediaWatcher.shared?.send("prev") }
-                        mediaButton(np.playing ? "pause.fill" : "play.fill", size: 24) { MediaWatcher.shared?.send("toggle") }
-                        mediaButton("forward.fill", size: 17) { MediaWatcher.shared?.send("next") }
+                        mediaButton("backward.fill", size: 17) { MediaHub.shared?.command("prev") }
+                        mediaButton(np.playing ? "pause.fill" : "play.fill", size: 24) { MediaHub.shared?.command("toggle") }
+                        mediaButton("forward.fill", size: 17) { MediaHub.shared?.command("next") }
                     }
                     .frame(maxWidth: .infinity)
                 }
@@ -1992,7 +1992,7 @@ final class MediaWatcher {
         }
         let title = o["title"] as? String ?? ""
         guard !title.isEmpty else {
-            if m.nowPlaying != nil { m.nowPlaying = nil; m.artwork = nil }
+            MediaHub.shared?.setSystem(nil, artwork: nil, artworkChanged: true)
             return
         }
         let num: (String) -> Double = { (o[$0] as? NSNumber)?.doubleValue ?? 0 }
@@ -2007,13 +2007,257 @@ final class MediaWatcher {
             playing: (o["playing"] as? Bool) ?? (num("rate") > 0),
             pid: Int32(num("pid"))
         )
-        if let old = m.nowPlaying, old.title != np.title || old.artist != np.artist {
-            m.artwork = nil
-        }
-        if let b64 = o["artwork"] as? String, let data = Data(base64Encoded: b64), let img = NSImage(data: data) {
-            m.artwork = img
-        }
+        var art: NSImage?
+        if let b64 = o["artwork"] as? String, let data = Data(base64Encoded: b64) { art = NSImage(data: data) }
+        MediaHub.shared?.setSystem(np, artwork: art, artworkChanged: art != nil)
+    }
+}
+
+// MARK: - Gộp nguồn nhạc
+
+/// macOS chỉ chọn một app "Đang phát". Khi app đó đang dừng mà Apple Music / Spotify vẫn chạy,
+/// RinNotch hiện và điều khiển Music / Spotify (hỏi trực tiếp qua AppleScript).
+@MainActor
+final class MediaHub {
+    static var shared: MediaHub?
+    private let m: NotchModel
+    private var system: NowPlaying?
+    private var systemArt: NSImage?
+    private var app: NowPlaying?
+    private var appArt: NSImage?
+    private(set) var appBundle: String?
+    private var usingApp = false
+
+    init(model: NotchModel) { m = model }
+
+    func setSystem(_ np: NowPlaying?, artwork: NSImage?, artworkChanged: Bool) {
+        if let old = system, let np, old.title != np.title || old.artist != np.artist { systemArt = nil }
+        if np == nil { systemArt = nil }
+        if artworkChanged, let artwork { systemArt = artwork }
+        system = np
+        recompute()
+    }
+
+    func setApp(_ np: NowPlaying?, bundle: String?, artwork: NSImage?) {
+        if let old = app, let np, old.title != np.title || old.artist != np.artist { appArt = nil }
+        if np == nil { appArt = nil }
+        if let artwork { appArt = artwork }
+        app = np
+        appBundle = np == nil ? nil : bundle
+        recompute()
+    }
+
+    func setAppArtwork(_ img: NSImage) {
+        appArt = img
+        recompute()
+    }
+
+    var systemIsPlaying: Bool { system?.playing == true }
+    var systemPID: Int32? { system?.pid }
+    var showingApp: Bool { usingApp }
+
+    private func recompute() {
+        let useApp: Bool
+        if let a = app, a.playing, system?.playing != true { useApp = true }
+        else if usingApp, let a = app, system?.playing != true, !a.title.isEmpty { useApp = true }
+        else { useApp = false }
+        usingApp = useApp
+        let np = useApp ? app : system
+        let art = useApp ? appArt : systemArt
         if m.nowPlaying != np { m.nowPlaying = np }
+        if m.artwork !== art { m.artwork = art }
+    }
+
+    func command(_ cmd: String) {
+        if usingApp, let b = appBundle {
+            AppMusicBridge.shared?.command(cmd, bundle: b)
+        } else {
+            MediaWatcher.shared?.send(cmd)
+        }
+    }
+}
+
+/// Hỏi Apple Music và Spotify đang phát gì (chỉ khi app đó đang mở sẵn, không tự bật app).
+@MainActor
+final class AppMusicBridge {
+    static var shared: AppMusicBridge?
+    private var timer: Timer?
+    private var busy = false
+    private var denied: Set<String> = []
+    private var lastKey: String?
+
+    static let apps: [(bundle: String, name: String)] = [("com.apple.Music", "Music"), ("com.spotify.client", "Spotify")]
+
+    init() {
+        timer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.poll() }
+        }
+    }
+
+    private func running(_ bundle: String) -> NSRunningApplication? {
+        NSRunningApplication.runningApplications(withBundleIdentifier: bundle).first
+    }
+
+    private func poll() {
+        guard !busy, let hub = MediaHub.shared else { return }
+        // Chỉ cần hỏi khi app macOS chọn đang dừng, hoặc đang hiện Music/Spotify.
+        guard !hub.systemIsPlaying || hub.showingApp else {
+            if hub.showingApp == false { hub.setApp(nil, bundle: nil, artwork: nil) }
+            return
+        }
+        let candidates = Self.apps.filter { running($0.bundle) != nil && !denied.contains($0.bundle) }
+        // Nếu chính Music/Spotify là app macOS đang chọn thì không cần hỏi thêm.
+        let filtered = candidates.filter { running($0.bundle)?.processIdentifier != hub.systemPID }
+        guard !filtered.isEmpty else {
+            hub.setApp(nil, bundle: nil, artwork: nil)
+            return
+        }
+        busy = true
+        query(filtered, index: 0, best: nil)
+    }
+
+    private func query(_ list: [(bundle: String, name: String)], index: Int, best: (NowPlaying, String)?) {
+        guard index < list.count else {
+            busy = false
+            finish(best)
+            return
+        }
+        let item = list[index]
+        let isSpotify = item.bundle == "com.spotify.client"
+        let script = [
+            "tell application \"\(item.name)\"",
+            "if player state is playing then",
+            "set st to \"playing\"",
+            "else if player state is paused then",
+            "set st to \"paused\"",
+            "else",
+            "return \"stopped\"",
+            "end if",
+            "set t to current track",
+            "return st & tab & (name of t) & tab & (artist of t) & tab & (album of t) & tab & (duration of t) & tab & player position",
+            "end tell",
+        ]
+        Self.osa(script) { [weak self] out, err in
+            Task { @MainActor in
+                guard let self else { return }
+                if let err, err.contains("-1743") {
+                    self.denied.insert(item.bundle)
+                    Diag.log("Chưa có quyền điều khiển \(item.name) (Cài đặt → Quyền riêng tư & Bảo mật → Tự động hoá)")
+                }
+                var best = best
+                if let out {
+                    let f = out.components(separatedBy: "\t")
+                    if f.count >= 6, f[0] == "playing" || f[0] == "paused" {
+                        let numv: (String) -> Double = { Double($0.replacingOccurrences(of: ",", with: ".").trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0 }
+                        var dur = numv(f[4])
+                        if isSpotify { dur /= 1000 }
+                        let np = NowPlaying(
+                            title: f[1], artist: f[2], album: f[3], duration: dur, elapsed: numv(f[5]),
+                            timestamp: Date(), rate: f[0] == "playing" ? 1 : 0, playing: f[0] == "playing",
+                            pid: self.running(item.bundle)?.processIdentifier ?? 0
+                        )
+                        if best == nil || (np.playing && best?.0.playing != true) { best = (np, item.bundle) }
+                    }
+                }
+                self.query(list, index: index + 1, best: best)
+            }
+        }
+    }
+
+    private func finish(_ best: (NowPlaying, String)?) {
+        guard let hub = MediaHub.shared else { return }
+        guard let (np, bundle) = best else {
+            hub.setApp(nil, bundle: nil, artwork: nil)
+            return
+        }
+        let key = "\(bundle)|\(np.title)|\(np.artist)"
+        hub.setApp(np, bundle: bundle, artwork: nil)
+        if key != lastKey {
+            lastKey = key
+            fetchArtwork(bundle: bundle, key: key)
+        }
+    }
+
+    /// Ảnh bìa: Music trả dữ liệu ảnh, Spotify trả đường link ảnh trên máy chủ của Spotify.
+    private func fetchArtwork(bundle: String, key: String) {
+        let apply: @Sendable (NSImage?) -> Void = { img in
+            guard let img else { return }
+            Task { @MainActor in
+                if self.lastKey == key { MediaHub.shared?.setAppArtwork(img) }
+            }
+        }
+        if bundle == "com.apple.Music" {
+            Self.osa(["tell application \"Music\" to get data of artwork 1 of current track"]) { out, _ in
+                apply(out.flatMap { Self.imageFromAppleScriptData($0) })
+            }
+        } else if bundle == "com.spotify.client" {
+            Self.osa(["tell application \"Spotify\" to get artwork url of current track"]) { out, _ in
+                guard let out, let url = URL(string: out), url.scheme == "https" else { return }
+                URLSession.shared.dataTask(with: url) { data, _, _ in
+                    apply(data.flatMap { NSImage(data: $0) })
+                }.resume()
+            }
+        }
+    }
+
+    nonisolated static func imageFromAppleScriptData(_ s: String) -> NSImage? {
+        // osascript in ra dạng «data XXXXhexhex…»
+        guard let start = s.range(of: "«data "), let end = s.range(of: "»", options: .backwards) else { return nil }
+        let body = s[start.upperBound..<end.lowerBound]
+        guard body.count > 8 else { return nil }
+        let hex = body.dropFirst(4)
+        var data = Data(capacity: hex.count / 2)
+        var it = hex.makeIterator()
+        while let a = it.next(), let b = it.next() {
+            guard let byte = UInt8(String([a, b]), radix: 16) else { return nil }
+            data.append(byte)
+        }
+        return NSImage(data: data)
+    }
+
+    func command(_ cmd: String, bundle: String) {
+        guard let app = Self.apps.first(where: { $0.bundle == bundle }) else { return }
+        let action: String
+        switch cmd {
+        case "toggle": action = "playpause"
+        case "next": action = "next track"
+        case "prev": action = "previous track"
+        case "play": action = "play"
+        case "pause": action = "pause"
+        default:
+            if cmd.hasPrefix("seek "), let v = Double(cmd.dropFirst(5)) {
+                action = "set player position to \(String(format: "%.1f", v))"
+            } else { return }
+        }
+        Self.osa(["tell application \"\(app.name)\" to \(action)"]) { _, _ in
+            Task { @MainActor in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    MainActor.assumeIsolated { self.poll() }
+                }
+            }
+        }
+    }
+
+    nonisolated static func osa(_ lines: [String], completion: @escaping @Sendable (String?, String?) -> Void) {
+        DispatchQueue.global(qos: .utility).async {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+            p.arguments = lines.flatMap { ["-e", $0] }
+            let out = Pipe(), err = Pipe()
+            p.standardOutput = out
+            p.standardError = err
+            do { try p.run() } catch {
+                completion(nil, error.localizedDescription)
+                return
+            }
+            // Đọc hết trước khi chờ thoát, tránh kẹt khi kết quả lớn (ảnh bìa).
+            let od = out.fileHandleForReading.readDataToEndOfFile()
+            let ed = err.fileHandleForReading.readDataToEndOfFile()
+            p.waitUntilExit()
+            let o = String(data: od, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let e = String(data: ed, encoding: .utf8)
+            completion(o?.isEmpty == true ? nil : o, e?.isEmpty == true ? nil : e)
+        }
     }
 }
 
@@ -2306,7 +2550,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         headphones = HeadphoneWatcher(model: model)
         recording = RecordingWatcher(model: model)
         TimerEngine.shared = TimerEngine(model: model)
+        MediaHub.shared = MediaHub(model: model)
         MediaWatcher.shared = MediaWatcher(model: model)
+        AppMusicBridge.shared = AppMusicBridge()
         HotKey.register()
         setupStatusItem()
     }

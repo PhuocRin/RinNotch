@@ -2,7 +2,7 @@
 
 Biến tai thỏ MacBook thành khu tiện ích nhỏ, bung ra mượt như Dynamic Island.
 
-Bản thử 0.4 (đang làm):
+Bản thử 0.5 (đang làm):
 
 - Rê chuột lên tai thỏ để mở: Nhạc, Kệ file, Bộ nhớ tạm, Ghi chú nhanh, Hẹn giờ, Hệ thống
 - Kéo file thả lên tai thỏ để giữ tạm, kéo ra chỗ khác để sao chép, gửi AirDrop
