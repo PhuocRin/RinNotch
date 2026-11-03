@@ -15,7 +15,7 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.3</string>
+	<string>0.4</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>LSMinimumSystemVersion</key>
@@ -26,6 +26,10 @@
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>RinNotch nghe micro để vẽ sóng âm trên tai thỏ khi có app đang ghi âm. Không lưu và không gửi âm thanh đi đâu.</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>RinNotch đọc phần trăm pin tai nghe Bluetooth để hiện trên tai thỏ khi tai nghe kết nối.</string>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>RinNotch lưu ghi chú nhanh vào app Notes, trong thư mục RinNotch.</string>
 	<key>NSHumanReadableCopyright</key>

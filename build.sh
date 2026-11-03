@@ -26,6 +26,15 @@ done
 lipo -create build/obj/RinNotch-arm64 build/obj/RinNotch-x86_64 -output "${APP}/Contents/MacOS/RinNotch"
 cp Info.plist "${APP}/Contents/Info.plist"
 
+# Icon app
+iconutil -c icns assets/AppIcon.iconset -o "${APP}/Contents/Resources/AppIcon.icns"
+
+# Trình đọc "Đang phát" (chạy qua /usr/bin/perl, xem Helper/rinmedia.m)
+xcrun clang -dynamiclib -fobjc-arc -O2 -arch arm64 -arch x86_64 -mmacosx-version-min=14.0 \
+  -framework Foundation Helper/rinmedia.m -o "${APP}/Contents/Resources/librinmedia.dylib"
+cp Helper/rinmedia.pl "${APP}/Contents/Resources/rinmedia.pl"
+codesign --force --sign "${SIGN_IDENTITY:--}" ${SIGN_KEYCHAIN:+--keychain "${SIGN_KEYCHAIN}"} "${APP}/Contents/Resources/librinmedia.dylib"
+
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"
 if [[ "${SIGN_IDENTITY}" == "-" ]]; then
   echo "⚠ Ký ad-hoc (bản thử)."

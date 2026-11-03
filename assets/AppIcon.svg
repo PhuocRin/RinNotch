@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5B8CFF"/><stop offset="0.55" stop-color="#7A5CFF"/><stop offset="1" stop-color="#B05CFF"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.3" cy="0.18" r="0.85">
+      <stop offset="0" stop-color="#fff" stop-opacity="0.38"/><stop offset="1" stop-color="#fff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="glass" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff" stop-opacity="0.62"/><stop offset="1" stop-color="#fff" stop-opacity="0.30"/>
+    </linearGradient>
+    <linearGradient id="art" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFB547"/><stop offset="1" stop-color="#FF4F8B"/>
+    </linearGradient>
+    <filter id="sh" x="-20%" y="-30%" width="140%" height="170%">
+      <feDropShadow dx="0" dy="16" stdDeviation="20" flood-color="#2a1a6b" flood-opacity="0.35"/>
+    </filter>
+    <filter id="ish" x="-20%" y="-30%" width="140%" height="180%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#120a3a" flood-opacity="0.55"/>
+    </filter>
+    <clipPath id="sq"><rect x="100" y="100" width="824" height="824" rx="185"/></clipPath>
+  </defs>
+  <g clip-path="url(#sq)">
+    <rect x="100" y="100" width="824" height="824" fill="url(#bg)"/>
+    <rect x="100" y="100" width="824" height="824" fill="url(#glow)"/>
+
+    <!-- màn hình MacBook bằng kính -->
+    <g filter="url(#sh)">
+      <rect x="170" y="226" width="684" height="482" rx="48" fill="url(#glass)" stroke="#fff" stroke-opacity="0.9" stroke-width="7"/>
+    </g>
+    <!-- thân máy -->
+    <g filter="url(#sh)">
+      <rect x="128" y="724" width="768" height="40" rx="20" fill="url(#glass)" stroke="#fff" stroke-opacity="0.9" stroke-width="6"/>
+    </g>
+
+    <!-- tai thỏ đang bung ra -->
+    <g filter="url(#ish)">
+      <path d="M262 229.5 Q284 229.5 284 251.5 L284 380 Q284 452 356 452 L668 452 Q740 452 740 380 L740 251.5 Q740 229.5 762 229.5 Z" fill="#0b0b12"/>
+    </g>
+    <circle cx="512" cy="254" r="9" fill="#232a44"/>
+    <circle cx="512" cy="254" r="4" fill="#3d4a7a"/>
+
+    <!-- ảnh bìa + tên bài + thanh thời lượng -->
+    <rect x="320" y="296" width="116" height="116" rx="28" fill="url(#art)"/>
+    <path d="M366 384 L366 330 L402 322 L402 372" fill="none" stroke="#fff" stroke-width="8" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="358" cy="384" r="10" fill="#fff"/><circle cx="394" cy="372" r="10" fill="#fff"/>
+    <rect x="462" y="304" width="170" height="24" rx="12" fill="#fff"/>
+    <rect x="462" y="344" width="112" height="18" rx="9" fill="#fff" fill-opacity="0.45"/>
+    <rect x="462" y="390" width="244" height="12" rx="6" fill="#fff" fill-opacity="0.22"/>
+    <rect x="462" y="390" width="150" height="12" rx="6" fill="#fff"/>
+
+    <!-- sóng âm -->
+    <g fill="#FF6B5F">
+      <rect x="652" y="303" width="9" height="26" rx="4.5"/>
+      <rect x="667" y="294" width="9" height="44" rx="4.5"/>
+      <rect x="682" y="299" width="9" height="34" rx="4.5"/>
+      <rect x="697" y="290" width="9" height="52" rx="4.5"/>
+    </g>
+  </g>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="none" stroke="#fff" stroke-opacity="0.35" stroke-width="4"/>
+</svg>

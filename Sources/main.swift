@@ -40,28 +40,91 @@ struct NotchGeometry {
 // MARK: - Dữ liệu
 
 enum Tab: String, CaseIterable, Identifiable {
-    case shelf, clipboard, notes
+    case media, shelf, clipboard, notes, timer, system
     var id: String { rawValue }
     var title: String {
         switch self {
+        case .media: return "Nhạc"
         case .shelf: return "Kệ file"
         case .clipboard: return "Bộ nhớ tạm"
         case .notes: return "Ghi chú"
+        case .timer: return "Hẹn giờ"
+        case .system: return "Hệ thống"
         }
     }
     var symbol: String {
         switch self {
+        case .media: return "music.note"
         case .shelf: return "tray.full"
         case .clipboard: return "doc.on.clipboard"
         case .notes: return "square.and.pencil"
+        case .timer: return "timer"
+        case .system: return "cpu"
         }
     }
 }
 
+struct HeadphoneInfo: Equatable {
+    var name: String
+    var symbol: String
+    var left: Int?
+    var right: Int?
+    var caseLevel: Int?
+    var main: Int?
+    var hasBattery: Bool { left != nil || right != nil || caseLevel != nil || main != nil }
+}
+
 enum Transient: Equatable {
-    case headphones(name: String, symbol: String)
+    case headphones(HeadphoneInfo)
     case charging(percent: Int)
     case unplugged(percent: Int)
+    case lowBattery(percent: Int)
+    case timerDone(minutes: Int)
+}
+
+struct NowPlaying: Equatable {
+    var title: String
+    var artist: String
+    var album: String
+    var duration: Double
+    var elapsed: Double
+    var timestamp: Date
+    var rate: Double
+    var playing: Bool
+    var pid: Int32
+
+    func position(at now: Date) -> Double {
+        guard duration > 0 else { return 0 }
+        let r = playing ? max(rate, playing ? 1 : 0) : 0
+        return min(max(elapsed + now.timeIntervalSince(timestamp) * r, 0), duration)
+    }
+    var appName: String { NSRunningApplication(processIdentifier: pid)?.localizedName ?? "" }
+}
+
+enum TimerMode: String { case stopwatch, countdown }
+
+struct TimerState: Equatable {
+    var mode: TimerMode = .stopwatch
+    var running = false
+    var startedAt: Date?
+    var accumulated: TimeInterval = 0
+    var countdownTotal: TimeInterval = 5 * 60
+
+    var active: Bool { running || accumulated > 0 }
+    func elapsed(at now: Date) -> TimeInterval {
+        accumulated + (startedAt.map { now.timeIntervalSince($0) } ?? 0)
+    }
+    func display(at now: Date) -> TimeInterval {
+        mode == .stopwatch ? elapsed(at: now) : max(countdownTotal - elapsed(at: now), 0)
+    }
+}
+
+func formatClock(_ t: TimeInterval, alwaysHours: Bool = false) -> String {
+    let s = max(0, Int(t.rounded(.down)))
+    if alwaysHours || s >= 3600 {
+        return String(format: "%02d:%02d:%02d", s / 3600, (s % 3600) / 60, s % 60)
+    }
+    return String(format: "%02d:%02d", s / 60, s % 60)
 }
 
 struct RecordingInfo: Equatable {
@@ -135,6 +198,12 @@ final class NotchModel: ObservableObject {
     @Published var noteStatus: String?
     @Published var dropTargeted = false
     @Published var micDenied = false
+    @Published var nowPlaying: NowPlaying?
+    @Published var artwork: NSImage?
+    @Published var timer = TimerState()
+
+    var musicCompact: Bool { nowPlaying?.playing == true && !(nowPlaying?.title.isEmpty ?? true) }
+    var timerCompact: Bool { timer.running }
 
     var draggingOut = false
     private var transientTimer: Timer?
@@ -243,16 +312,16 @@ struct IslandView: View {
     var phase: Phase {
         if m.expanded { return .expanded }
         if m.transient != nil { return .banner }
-        if m.transient != nil || m.recording != nil { return .compact }
+        if m.recording != nil || m.timerCompact || m.musicCompact { return .compact }
         return .idle
     }
 
     var size: CGSize {
         switch phase {
         case .idle: return CGSize(width: m.notchWidth, height: m.notchHeight)
-        case .compact: return CGSize(width: m.notchWidth + 210, height: m.notchHeight)
-        case .banner: return CGSize(width: max(m.notchWidth + 150, 380), height: m.notchHeight + 74)
-        case .expanded: return CGSize(width: 600, height: m.notchHeight + 210)
+        case .compact: return CGSize(width: m.notchWidth + (m.recording == nil && !m.timerCompact ? 130 : 210), height: m.notchHeight)
+        case .banner: return CGSize(width: max(m.notchWidth + 170, 400), height: m.notchHeight + 78)
+        case .expanded: return CGSize(width: NotchController.expandedWidth, height: m.notchHeight + 214)
         }
     }
 
@@ -317,42 +386,83 @@ struct CompactView: View {
     }
 
     @ViewBuilder var leading: some View {
-        if let t = m.transient {
-            switch t {
-            case .headphones:
-                EmptyView()
-            case .charging:
-                HStack(spacing: 5) {
-                    Image(systemName: "bolt.fill").foregroundStyle(Color.green)
-                    Text("Đang sạc").foregroundStyle(Color.green)
-                }
-                .font(.system(size: 12, weight: .semibold))
-            case .unplugged:
-                HStack(spacing: 5) {
-                    Image(systemName: "powerplug").foregroundStyle(.white.opacity(0.7))
-                    Text("Đã ngắt sạc")
-                }
-                .font(.system(size: 12, weight: .semibold))
-            }
-        } else if let r = m.recording {
+        if let r = m.recording {
             RecordingBadge(info: r)
+        } else if m.timerCompact {
+            HStack(spacing: 5) {
+                Image(systemName: m.timer.mode == .countdown ? "timer" : "stopwatch")
+                    .foregroundStyle(Color.orange)
+                TimelineView(.periodic(from: .now, by: 0.5)) { ctx in
+                    Text(formatClock(m.timer.display(at: ctx.date)))
+                        .monospacedDigit()
+                        .foregroundStyle(Color.orange)
+                }
+            }
+            .font(.system(size: 12, weight: .semibold))
+        } else if m.musicCompact {
+            ArtworkView(image: m.artwork, size: 20, radius: 5)
         }
     }
 
     @ViewBuilder var trailing: some View {
-        if let t = m.transient {
-            switch t {
-            case .headphones:
-                EmptyView()
-            case .charging(let p), .unplugged(let p):
-                HStack(spacing: 6) {
-                    Text("\(p)%").font(.system(size: 12, weight: .semibold)).monospacedDigit()
-                    BatteryGlyph(percent: p, charging: { if case .charging = t { return true }; return false }())
+        if m.recording != nil {
+            Waveform(levels: m.levels)
+        } else if m.timerCompact {
+            if m.timer.mode == .countdown {
+                TimelineView(.periodic(from: .now, by: 0.5)) { ctx in
+                    let total = max(m.timer.countdownTotal, 1)
+                    ZStack {
+                        Circle().stroke(Color.white.opacity(0.18), lineWidth: 2.5)
+                        Circle()
+                            .trim(from: 0, to: CGFloat(m.timer.display(at: ctx.date) / total))
+                            .stroke(Color.orange, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                            .rotationEffect(.degrees(-90))
+                    }
+                    .frame(width: 16, height: 16)
+                }
+            } else {
+                Text("Bấm giờ").font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.6))
+            }
+        } else if m.musicCompact {
+            MusicBars()
+        }
+    }
+}
+
+struct MusicBars: View {
+    @State private var phase = false
+    var body: some View {
+        HStack(alignment: .center, spacing: 2) {
+            ForEach(0..<4, id: \.self) { i in
+                Capsule()
+                    .fill(Color.white.opacity(0.9))
+                    .frame(width: 3, height: phase ? [14, 8, 16, 10][i] : [6, 14, 7, 13][i])
+                    .animation(.easeInOut(duration: [0.45, 0.38, 0.5, 0.42][i]).repeatForever(autoreverses: true), value: phase)
+            }
+        }
+        .frame(height: 18)
+        .onAppear { phase = true }
+    }
+}
+
+struct ArtworkView: View {
+    let image: NSImage?
+    var size: CGFloat
+    var radius: CGFloat
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
+            } else {
+                ZStack {
+                    LinearGradient(colors: [Color(red: 1, green: 0.7, blue: 0.28), Color(red: 1, green: 0.31, blue: 0.55)],
+                                   startPoint: .topLeading, endPoint: .bottomTrailing)
+                    Image(systemName: "music.note").font(.system(size: size * 0.45, weight: .semibold)).foregroundStyle(.white)
                 }
             }
-        } else if m.recording != nil {
-            Waveform(levels: m.levels)
         }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: radius))
     }
 }
 
@@ -363,29 +473,69 @@ struct BannerView: View {
     var body: some View {
         VStack(spacing: 0) {
             Color.clear.frame(height: m.notchHeight)
-            if case .charging(let p) = m.transient {
+            switch m.transient {
+            case .charging(let p):
                 chargeRow(percent: p, charging: true)
-            } else if case .unplugged(let p) = m.transient {
+            case .unplugged(let p):
                 chargeRow(percent: p, charging: false)
-            } else if case .headphones(let name, let symbol) = m.transient {
+            case .lowBattery(let p):
                 HStack(spacing: 14) {
-                    Image(systemName: symbol)
+                    BigBattery(percent: p, charging: false)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Pin yếu").font(.system(size: 14, weight: .semibold)).foregroundStyle(Color.red)
+                        Text("Cắm sạc sớm nha").font(.system(size: 12)).foregroundStyle(.white.opacity(0.6))
+                    }
+                    Spacer(minLength: 0)
+                    Text("\(p)%").font(.system(size: 26, weight: .semibold, design: .rounded)).monospacedDigit()
+                        .foregroundStyle(Color.red)
+                }
+                .padding(.horizontal, 22)
+                .frame(maxHeight: .infinity)
+            case .timerDone(let minutes):
+                HStack(spacing: 14) {
+                    Image(systemName: "bell.and.waves.left.and.right.fill")
+                        .font(.system(size: 28))
+                        .foregroundStyle(Color.orange)
+                        .frame(width: 46)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Hết giờ").font(.system(size: 14, weight: .semibold)).foregroundStyle(Color.orange)
+                        Text(minutes > 0 ? "Đã đếm ngược \(minutes) phút" : "Đã đếm ngược xong")
+                            .font(.system(size: 12)).foregroundStyle(.white.opacity(0.6))
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 22)
+                .frame(maxHeight: .infinity)
+            case .headphones(let info):
+                HStack(spacing: 14) {
+                    Image(systemName: info.symbol)
                         .font(.system(size: 30, weight: .regular))
                         .frame(width: 46, height: 46)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(name)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(info.name)
                             .font(.system(size: 14, weight: .semibold))
-                            .lineLimit(2)
-                            .fixedSize(horizontal: false, vertical: true)
-                        HStack(spacing: 5) {
-                            Circle().fill(Color.green).frame(width: 6, height: 6)
-                            Text("Đã kết nối").font(.system(size: 12, weight: .medium)).foregroundStyle(Color.green)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        if info.hasBattery {
+                            HStack(spacing: 10) {
+                                if let v = info.main { BatteryChip(label: nil, value: v) }
+                                if let v = info.left { BatteryChip(label: "T", value: v) }
+                                if let v = info.right { BatteryChip(label: "P", value: v) }
+                                if let v = info.caseLevel { BatteryChip(label: "Hộp", value: v) }
+                            }
+                        } else {
+                            HStack(spacing: 5) {
+                                Circle().fill(Color.green).frame(width: 6, height: 6)
+                                Text("Đã kết nối").font(.system(size: 12, weight: .medium)).foregroundStyle(Color.green)
+                            }
                         }
                     }
                     Spacer(minLength: 0)
                 }
                 .padding(.horizontal, 22)
                 .frame(maxHeight: .infinity)
+            case .none:
+                EmptyView()
             }
         }
         .foregroundStyle(.white)
@@ -410,6 +560,20 @@ struct BannerView: View {
         }
         .padding(.horizontal, 22)
         .frame(maxHeight: .infinity)
+    }
+}
+
+struct BatteryChip: View {
+    let label: String?
+    let value: Int
+    var body: some View {
+        HStack(spacing: 4) {
+            if let label { Text(label).foregroundStyle(.white.opacity(0.55)) }
+            Image(systemName: value <= 20 ? "battery.25percent" : (value <= 60 ? "battery.50percent" : "battery.100percent"))
+                .foregroundStyle(value <= 20 ? Color.red : Color.green)
+            Text("\(value)%").monospacedDigit()
+        }
+        .font(.system(size: 11, weight: .semibold))
     }
 }
 
@@ -548,9 +712,12 @@ struct ExpandedView: View {
                     Button {
                         m.tab = t
                     } label: {
-                        Label(t.title, systemImage: t.symbol)
-                            .labelStyle(.titleAndIcon)
+                        HStack(spacing: 5) {
+                            Image(systemName: t.symbol)
+                            if m.tab == t { Text(t.title) }
+                        }
                             .font(.system(size: 11, weight: .semibold))
+                            .frame(minWidth: 18)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 5)
                             .background(Capsule().fill(Color.white.opacity(m.tab == t ? 0.2 : 0.06)))
@@ -558,13 +725,14 @@ struct ExpandedView: View {
                             .contentShape(Capsule())
                     }
                     .buttonStyle(.plain)
+                    .help(t.title)
                 }
                 Spacer(minLength: 0)
                 if let r = m.recording {
                     HStack(spacing: 8) {
                         RecordingBadge(info: r, showName: !m.micDenied)
                         if m.micDenied {
-                            Button("Cấp quyền micro để hiện sóng âm") {
+                            Button("Cấp quyền micro") {
                                 if let u = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
                                     NSWorkspace.shared.open(u)
                                 }
@@ -578,9 +746,12 @@ struct ExpandedView: View {
             }
             Group {
                 switch m.tab {
+                case .media: MediaView(m: m)
                 case .shelf: ShelfView(m: m)
                 case .clipboard: ClipboardView(m: m)
                 case .notes: NotesView(m: m)
+                case .timer: TimerView(m: m)
+                case .system: SystemView()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -598,6 +769,426 @@ struct ExpandedView: View {
             }
             return true
         }
+    }
+}
+
+// MARK: Nhạc / video
+
+struct MediaView: View {
+    @ObservedObject var m: NotchModel
+
+    var body: some View {
+        if let np = m.nowPlaying, !np.title.isEmpty {
+            HStack(spacing: 18) {
+                ArtworkView(image: m.artwork, size: 112, radius: 18)
+                    .shadow(color: .black.opacity(0.5), radius: 10, y: 4)
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) {
+                        if let icon = NSRunningApplication(processIdentifier: np.pid)?.icon {
+                            Image(nsImage: icon).resizable().frame(width: 14, height: 14)
+                        }
+                        Text(np.appName).font(.system(size: 11, weight: .medium)).foregroundStyle(.white.opacity(0.5))
+                    }
+                    Text(np.title).font(.system(size: 16, weight: .semibold)).lineLimit(1)
+                    Text(np.artist.isEmpty ? np.album : np.artist)
+                        .font(.system(size: 12)).foregroundStyle(.white.opacity(0.6)).lineLimit(1)
+                    if np.duration > 0 {
+                        TimelineView(.periodic(from: .now, by: 0.5)) { ctx in
+                            let pos = np.position(at: ctx.date)
+                            VStack(spacing: 4) {
+                                GeometryReader { g in
+                                    ZStack(alignment: .leading) {
+                                        Capsule().fill(Color.white.opacity(0.18))
+                                        Capsule().fill(Color.white).frame(width: g.size.width * CGFloat(pos / np.duration))
+                                    }
+                                    .contentShape(Rectangle())
+                                    .onTapGesture { loc in
+                                        MediaWatcher.shared?.send("seek \(Double(loc.x / g.size.width) * np.duration)")
+                                    }
+                                }
+                                .frame(height: 5)
+                                HStack {
+                                    Text(formatClock(pos)).monospacedDigit()
+                                    Spacer()
+                                    Text("-" + formatClock(np.duration - pos)).monospacedDigit()
+                                }
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(.white.opacity(0.5))
+                            }
+                        }
+                    }
+                    HStack(spacing: 22) {
+                        mediaButton("backward.fill", size: 17) { MediaWatcher.shared?.send("prev") }
+                        mediaButton(np.playing ? "pause.fill" : "play.fill", size: 24) { MediaWatcher.shared?.send("toggle") }
+                        mediaButton("forward.fill", size: 17) { MediaWatcher.shared?.send("next") }
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+            }
+        } else {
+            VStack(spacing: 6) {
+                Image(systemName: "music.note").font(.system(size: 22))
+                Text("Chưa có gì đang phát").font(.system(size: 12, weight: .semibold))
+                Text(MediaWatcher.shared?.statusText ?? "Mở nhạc hoặc video, tên bài sẽ hiện ở đây")
+                    .font(.system(size: 11)).foregroundStyle(.white.opacity(0.55))
+                    .multilineTextAlignment(.center)
+            }
+            .foregroundStyle(.white.opacity(0.8))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    func mediaButton(_ symbol: String, size: CGFloat, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: size, weight: .semibold))
+                .frame(width: 44, height: 36)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: Hẹn giờ
+
+struct TimerView: View {
+    @ObservedObject var m: NotchModel
+    private let presets = [1, 3, 5, 10, 15, 25, 30, 45, 60]
+
+    var body: some View {
+        HStack(spacing: 22) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 6) {
+                    modeButton(.stopwatch, "Bấm giờ", "stopwatch")
+                    modeButton(.countdown, "Đếm ngược", "timer")
+                }
+                TimelineView(.periodic(from: .now, by: 0.25)) { ctx in
+                    Text(formatClock(m.timer.display(at: ctx.date), alwaysHours: true))
+                        .font(.system(size: 40, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(m.timer.running ? Color.orange : Color.white)
+                }
+                HStack(spacing: 8) {
+                    Button(m.timer.running ? "Tạm dừng" : (m.timer.accumulated > 0 ? "Tiếp tục" : "Bắt đầu")) {
+                        TimerEngine.shared?.toggle()
+                    }
+                    .buttonStyle(PillButton(prominent: true))
+                    Button("Đặt lại") { TimerEngine.shared?.reset() }
+                        .buttonStyle(PillButton())
+                        .disabled(!m.timer.active)
+                }
+            }
+            if m.timer.mode == .countdown {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Đếm ngược").font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.5))
+                    LazyVGrid(columns: Array(repeating: GridItem(.fixed(58), spacing: 6), count: 3), spacing: 6) {
+                        ForEach(presets, id: \.self) { min in
+                            Button {
+                                TimerEngine.shared?.setCountdown(minutes: min)
+                            } label: {
+                                Text(min == 60 ? "1 giờ" : "\(min) phút")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .frame(width: 58, height: 26)
+                                    .background(Capsule().fill(Color.white.opacity(
+                                        Int(m.timer.countdownTotal) == min * 60 ? 0.24 : 0.08)))
+                                    .contentShape(Capsule())
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(m.timer.running)
+                        }
+                    }
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Bấm giờ chạy từ 00:00:00").font(.system(size: 12, weight: .semibold))
+                    Text("Đang chạy thì tai thỏ hiện giờ ở hai bên, rê chuột vào để dừng hoặc đặt lại.")
+                        .font(.system(size: 11)).foregroundStyle(.white.opacity(0.55))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(width: 200)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    func modeButton(_ mode: TimerMode, _ title: String, _ symbol: String) -> some View {
+        Button {
+            TimerEngine.shared?.setMode(mode)
+        } label: {
+            Label(title, systemImage: symbol)
+                .font(.system(size: 11, weight: .semibold))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Capsule().fill(Color.white.opacity(m.timer.mode == mode ? 0.2 : 0.06)))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(m.timer.running)
+    }
+}
+
+@MainActor
+final class TimerEngine {
+    static var shared: TimerEngine?
+    private let m: NotchModel
+    private var tick: Timer?
+
+    init(model: NotchModel) {
+        m = model
+        tick = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.check() }
+        }
+    }
+
+    func toggle() {
+        var t = m.timer
+        if t.running {
+            t.accumulated = t.elapsed(at: Date())
+            t.startedAt = nil
+            t.running = false
+        } else {
+            if t.mode == .countdown && t.elapsed(at: Date()) >= t.countdownTotal { t.accumulated = 0 }
+            t.startedAt = Date()
+            t.running = true
+        }
+        m.timer = t
+    }
+
+    func reset() {
+        var t = m.timer
+        t.running = false
+        t.startedAt = nil
+        t.accumulated = 0
+        m.timer = t
+    }
+
+    func setMode(_ mode: TimerMode) {
+        guard !m.timer.running else { return }
+        var t = m.timer
+        t.mode = mode
+        t.accumulated = 0
+        t.startedAt = nil
+        m.timer = t
+    }
+
+    func setCountdown(minutes: Int) {
+        guard !m.timer.running else { return }
+        var t = m.timer
+        t.countdownTotal = TimeInterval(minutes * 60)
+        t.accumulated = 0
+        m.timer = t
+    }
+
+    private func check() {
+        let t = m.timer
+        guard t.running, t.mode == .countdown, t.elapsed(at: Date()) >= t.countdownTotal else { return }
+        var done = t
+        done.running = false
+        done.startedAt = nil
+        done.accumulated = 0
+        m.timer = done
+        m.showTransient(.timerDone(minutes: Int(t.countdownTotal / 60)), seconds: 8)
+        for i in 0..<3 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * 1.2) {
+                NSSound(named: NSSound.Name("Glass"))?.play()
+            }
+        }
+    }
+}
+
+// MARK: Hệ thống
+
+@MainActor
+final class SystemMonitor: ObservableObject {
+    @Published var cpu: Double = 0
+    @Published var cpuHistory: [Double] = Array(repeating: 0, count: 30)
+    @Published var ramUsed: Double = 0
+    @Published var ramTotal: Double = Double(ProcessInfo.processInfo.physicalMemory)
+    @Published var down: Double = 0
+    @Published var up: Double = 0
+    @Published var thermal: ProcessInfo.ThermalState = .nominal
+    @Published var battery: Int?
+
+    private var timer: Timer?
+    private var lastTicks: (busy: UInt64, total: UInt64)?
+    private var lastNet: (rx: UInt64, tx: UInt64, at: Date)?
+
+    func start() {
+        guard timer == nil else { return }
+        sample()
+        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.sample() }
+        }
+    }
+
+    func stop() {
+        timer?.invalidate()
+        timer = nil
+        lastTicks = nil
+        lastNet = nil
+    }
+
+    private func sample() {
+        // CPU
+        var size = mach_msg_type_number_t(MemoryLayout<host_cpu_load_info_data_t>.stride / MemoryLayout<integer_t>.stride)
+        var info = host_cpu_load_info()
+        let kr = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(size)) {
+                host_statistics(mach_host_self(), HOST_CPU_LOAD_INFO, $0, &size)
+            }
+        }
+        if kr == KERN_SUCCESS {
+            let user = UInt64(info.cpu_ticks.0), sys = UInt64(info.cpu_ticks.1)
+            let idle = UInt64(info.cpu_ticks.2), nice = UInt64(info.cpu_ticks.3)
+            let busy = user + sys + nice, total = busy + idle
+            if let l = lastTicks, total > l.total {
+                cpu = Double(busy - l.busy) / Double(total - l.total) * 100
+                cpuHistory.removeFirst()
+                cpuHistory.append(cpu)
+            }
+            lastTicks = (busy, total)
+        }
+        // RAM (cách tính gần giống Activity Monitor: bộ nhớ app + wired + nén)
+        var vm = vm_statistics64()
+        var c = mach_msg_type_number_t(MemoryLayout<vm_statistics64_data_t>.stride / MemoryLayout<integer_t>.stride)
+        let kr2 = withUnsafeMutablePointer(to: &vm) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(c)) {
+                host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &c)
+            }
+        }
+        if kr2 == KERN_SUCCESS {
+            let page = Double(vm_kernel_page_size)
+            let app = Double(vm.internal_page_count) - Double(vm.purgeable_count)
+            ramUsed = (app + Double(vm.wire_count) + Double(vm.compressor_page_count)) * page
+        }
+        // Mạng
+        var rx: UInt64 = 0, tx: UInt64 = 0
+        var ifaddr: UnsafeMutablePointer<ifaddrs>?
+        if getifaddrs(&ifaddr) == 0, let first = ifaddr {
+            var p: UnsafeMutablePointer<ifaddrs>? = first
+            while let cur = p {
+                let ifa = cur.pointee
+                if let addr = ifa.ifa_addr, addr.pointee.sa_family == UInt8(AF_LINK), let data = ifa.ifa_data {
+                    let name = String(cString: ifa.ifa_name)
+                    if !name.hasPrefix("lo") {
+                        let d = data.assumingMemoryBound(to: if_data.self).pointee
+                        rx += UInt64(d.ifi_ibytes)
+                        tx += UInt64(d.ifi_obytes)
+                    }
+                }
+                p = ifa.ifa_next
+            }
+            freeifaddrs(first)
+        }
+        let now = Date()
+        if let l = lastNet {
+            let dt = max(now.timeIntervalSince(l.at), 0.2)
+            down = rx >= l.rx ? Double(rx - l.rx) / dt : down
+            up = tx >= l.tx ? Double(tx - l.tx) / dt : up
+        }
+        lastNet = (rx, tx, now)
+        thermal = ProcessInfo.processInfo.thermalState
+        let b = PowerWatcher.read()
+        battery = b.ac == nil ? nil : b.percent
+    }
+
+    static func speed(_ bps: Double) -> String {
+        if bps >= 1_000_000 { return String(format: "%.1f MB/s", bps / 1_000_000) }
+        return String(format: "%.0f KB/s", bps / 1_000)
+    }
+    static func gb(_ b: Double) -> String { String(format: "%.1f", b / 1_073_741_824) }
+}
+
+struct SystemView: View {
+    @StateObject private var mon = SystemMonitor()
+
+    var thermalText: (String, Color) {
+        switch mon.thermal {
+        case .nominal: return ("Bình thường", .green)
+        case .fair: return ("Hơi ấm", .yellow)
+        case .serious: return ("Nóng", .orange)
+        case .critical: return ("Rất nóng", .red)
+        @unknown default: return ("Không rõ", .gray)
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            tile("CPU", String(format: "%.0f%%", mon.cpu)) {
+                Sparkline(values: mon.cpuHistory, maxValue: 100).stroke(Color.cyan, lineWidth: 1.5).frame(height: 30)
+            }
+            tile("RAM", "\(SystemMonitor.gb(mon.ramUsed)) GB") {
+                VStack(alignment: .leading, spacing: 4) {
+                    GeometryReader { g in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color.white.opacity(0.15))
+                            Capsule().fill(Color.purple).frame(width: g.size.width * CGFloat(min(mon.ramUsed / max(mon.ramTotal, 1), 1)))
+                        }
+                    }
+                    .frame(height: 6)
+                    Text("trên \(SystemMonitor.gb(mon.ramTotal)) GB").font(.system(size: 10)).foregroundStyle(.white.opacity(0.5))
+                }
+            }
+            tile("Mạng", nil) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Label(SystemMonitor.speed(mon.down), systemImage: "arrow.down").foregroundStyle(Color.green)
+                    Label(SystemMonitor.speed(mon.up), systemImage: "arrow.up").foregroundStyle(Color.blue)
+                }
+                .font(.system(size: 12, weight: .semibold))
+                .monospacedDigit()
+            }
+            tile("Nhiệt", thermalText.0) {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 3) {
+                        ForEach(0..<4, id: \.self) { i in
+                            Capsule().fill(i <= levelIndex ? thermalText.1 : Color.white.opacity(0.15)).frame(height: 6)
+                        }
+                    }
+                    Text(mon.battery.map { "Pin \($0)%" } ?? "Mức nhiệt do macOS báo")
+                        .font(.system(size: 10)).foregroundStyle(.white.opacity(0.5))
+                }
+            }
+        }
+        .onAppear { mon.start() }
+        .onDisappear { mon.stop() }
+    }
+
+    var levelIndex: Int {
+        switch mon.thermal {
+        case .nominal: return 0
+        case .fair: return 1
+        case .serious: return 2
+        default: return 3
+        }
+    }
+
+    func tile<C: View>(_ title: String, _ value: String?, @ViewBuilder content: () -> C) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.5))
+            if let value {
+                Text(value).font(.system(size: 20, weight: .semibold, design: .rounded)).monospacedDigit().lineLimit(1)
+            }
+            content()
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(RoundedRectangle(cornerRadius: 14).fill(Color.white.opacity(0.07)))
+    }
+}
+
+struct Sparkline: Shape {
+    var values: [Double]
+    var maxValue: Double
+    func path(in r: CGRect) -> Path {
+        var p = Path()
+        guard values.count > 1 else { return p }
+        let step = r.width / CGFloat(values.count - 1)
+        for (i, v) in values.enumerated() {
+            let pt = CGPoint(x: CGFloat(i) * step, y: r.maxY - r.height * CGFloat(min(v / maxValue, 1)))
+            if i == 0 { p.move(to: pt) } else { p.addLine(to: pt) }
+        }
+        return p
     }
 }
 
@@ -1055,7 +1646,64 @@ final class HeadphoneWatcher {
         let t = CA.transport(dev)
         guard t == kAudioDeviceTransportTypeBluetooth || t == kAudioDeviceTransportTypeBluetoothLE else { return }
         let name = CA.name(dev)
-        m.showTransient(.headphones(name: name.isEmpty ? "Tai nghe" : name, symbol: Self.symbol(for: name)), seconds: 3.5)
+        let info = HeadphoneInfo(name: name.isEmpty ? "Tai nghe" : name, symbol: Self.symbol(for: name))
+        m.showTransient(.headphones(info), seconds: 5)
+        fetchBattery(for: info, attempt: 0)
+    }
+
+    /// Đọc % pin tai nghe từ System Information (system_profiler). Không có API chính thức nên có thể trống.
+    private func fetchBattery(for info: HeadphoneInfo, attempt: Int) {
+        let name = info.name
+        DispatchQueue.global(qos: .userInitiated).async {
+            let levels = HeadphoneWatcher.readBattery(name: name)
+            Task { @MainActor in
+                guard case .headphones(let cur) = self.m.transient, cur.name == name else { return }
+                if let l = levels {
+                    var u = cur
+                    u.left = l.left; u.right = l.right; u.caseLevel = l.caseLevel; u.main = l.main
+                    self.m.transient = .headphones(u)
+                    Diag.log("Pin tai nghe: T \(l.left ?? -1) P \(l.right ?? -1) Hộp \(l.caseLevel ?? -1) Chung \(l.main ?? -1)")
+                } else if attempt == 0 {
+                    // Vừa kết nối macOS có thể chưa có số pin, thử lại một lần.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                        MainActor.assumeIsolated { self.fetchBattery(for: info, attempt: 1) }
+                    }
+                } else {
+                    Diag.log("Không đọc được pin của \(name)")
+                }
+            }
+        }
+    }
+
+    nonisolated static func readBattery(name: String) -> (left: Int?, right: Int?, caseLevel: Int?, main: Int?)? {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/sbin/system_profiler")
+        p.arguments = ["SPBluetoothDataType", "-json", "-detailLevel", "basic"]
+        let out = Pipe()
+        p.standardOutput = out
+        p.standardError = Pipe()
+        do { try p.run() } catch { return nil }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let items = root["SPBluetoothDataType"] as? [[String: Any]] else { return nil }
+        func num(_ v: Any?) -> Int? {
+            guard let s = v as? String else { return nil }
+            return Int(s.filter(\.isNumber))
+        }
+        for item in items {
+            guard let connected = item["device_connected"] as? [[String: Any]] else { continue }
+            for entry in connected {
+                for (devName, value) in entry {
+                    guard let d = value as? [String: Any] else { continue }
+                    guard devName == name || connected.count == 1 else { continue }
+                    let r = (left: num(d["device_batteryLevelLeft"]), right: num(d["device_batteryLevelRight"]),
+                             caseLevel: num(d["device_batteryLevelCase"]), main: num(d["device_batteryLevelMain"]))
+                    if r.left != nil || r.right != nil || r.caseLevel != nil || r.main != nil { return r }
+                }
+            }
+        }
+        return nil
     }
 
     static func symbol(for name: String) -> String {
@@ -1236,6 +1884,139 @@ enum Diag {
     }
 }
 
+// MARK: - Nhạc / video đang phát
+
+/// Chạy trình đọc "Đang phát" (perl + librinmedia.dylib) và nhận thông tin qua từng dòng JSON.
+@MainActor
+final class MediaWatcher {
+    static var shared: MediaWatcher?
+    private let m: NotchModel
+    private var proc: Process?
+    private var input: FileHandle?
+    private var buffer = Data()
+    private var restarts = 0
+    private(set) var statusText: String?
+
+    init(model: NotchModel) {
+        m = model
+        start()
+    }
+
+    func start() {
+        guard let res = Bundle.main.resourceURL else { return }
+        let script = res.appendingPathComponent("rinmedia.pl")
+        let lib = res.appendingPathComponent("librinmedia.dylib")
+        guard FileManager.default.fileExists(atPath: script.path), FileManager.default.fileExists(atPath: lib.path) else {
+            statusText = "Thiếu trình đọc nhạc trong app"
+            Diag.log("Thiếu rinmedia.pl hoặc librinmedia.dylib")
+            return
+        }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/perl")
+        p.arguments = [script.path, lib.path]
+        let out = Pipe(), inp = Pipe(), err = Pipe()
+        p.standardOutput = out
+        p.standardInput = inp
+        p.standardError = err
+        out.fileHandleForReading.readabilityHandler = { [weak self] h in
+            let d = h.availableData
+            guard !d.isEmpty else { return }
+            Task { @MainActor in self?.receive(d) }
+        }
+        err.fileHandleForReading.readabilityHandler = { h in
+            let d = h.availableData
+            guard !d.isEmpty, let t = String(data: d, encoding: .utf8) else { return }
+            Task { @MainActor in Diag.log("Trình đọc nhạc báo lỗi: \(t.trimmingCharacters(in: .whitespacesAndNewlines))") }
+        }
+        p.terminationHandler = { [weak self] pr in
+            let code = pr.terminationStatus
+            Task { @MainActor in self?.died(code) }
+        }
+        do {
+            try p.run()
+            proc = p
+            input = inp.fileHandleForWriting
+            Diag.log("Đã chạy trình đọc nhạc")
+        } catch {
+            statusText = "Không chạy được trình đọc nhạc"
+            Diag.log("Không chạy được perl: \(error.localizedDescription)")
+        }
+    }
+
+    func send(_ cmd: String) {
+        guard let input, let data = (cmd + "\n").data(using: .utf8) else { return }
+        try? input.write(contentsOf: data)
+    }
+
+    func stop() {
+        proc?.terminationHandler = nil
+        proc?.terminate()
+        proc = nil
+    }
+
+    private func died(_ code: Int32) {
+        proc = nil
+        input = nil
+        Diag.log("Trình đọc nhạc dừng (mã \(code))")
+        guard restarts < 5 else {
+            statusText = "Trình đọc nhạc dừng nhiều lần, có thể macOS đã chặn cách này"
+            return
+        }
+        restarts += 1
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+            MainActor.assumeIsolated { self.start() }
+        }
+    }
+
+    private func receive(_ d: Data) {
+        buffer.append(d)
+        while let nl = buffer.firstIndex(of: 0x0A) {
+            let line = buffer.subdata(in: buffer.startIndex..<nl)
+            buffer.removeSubrange(buffer.startIndex...nl)
+            if !line.isEmpty { parse(line) }
+        }
+        if buffer.count > 8_000_000 { buffer.removeAll() }
+    }
+
+    private func parse(_ line: Data) {
+        guard let o = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else { return }
+        if let e = o["error"] as? String {
+            statusText = e
+            Diag.log("Trình đọc nhạc: \(e)")
+            return
+        }
+        if o["ready"] != nil { restarts = 0; return }
+        if let cmd = o["command"] as? String {
+            Diag.log("Lệnh \(cmd): \((o["ok"] as? Bool) == true ? "ok" : "không được")")
+            return
+        }
+        let title = o["title"] as? String ?? ""
+        guard !title.isEmpty else {
+            if m.nowPlaying != nil { m.nowPlaying = nil; m.artwork = nil }
+            return
+        }
+        let num: (String) -> Double = { (o[$0] as? NSNumber)?.doubleValue ?? 0 }
+        let np = NowPlaying(
+            title: title,
+            artist: o["artist"] as? String ?? "",
+            album: o["album"] as? String ?? "",
+            duration: num("duration"),
+            elapsed: num("elapsed"),
+            timestamp: Date(timeIntervalSince1970: num("timestamp")),
+            rate: num("rate"),
+            playing: (o["playing"] as? Bool) ?? (num("rate") > 0),
+            pid: Int32(num("pid"))
+        )
+        if let old = m.nowPlaying, old.title != np.title || old.artist != np.artist {
+            m.artwork = nil
+        }
+        if let b64 = o["artwork"] as? String, let data = Data(base64Encoded: b64), let img = NSImage(data: data) {
+            m.artwork = img
+        }
+        if m.nowPlaying != np { m.nowPlaying = np }
+    }
+}
+
 // MARK: - Nguồn điện
 
 @MainActor
@@ -1269,12 +2050,24 @@ final class PowerWatcher {
         return (nil, 0)
     }
 
+    private var lastPercent: Int?
+
     func update() {
         let r = Self.read()
         guard let ac = r.ac else { return }
-        defer { onAC = ac }
-        guard let was = onAC, was != ac else { return }
-        m.showTransient(ac ? .charging(percent: r.percent) : .unplugged(percent: r.percent), seconds: 3)
+        defer { onAC = ac; lastPercent = r.percent }
+        if let was = onAC, was != ac {
+            m.showTransient(ac ? .charging(percent: r.percent) : .unplugged(percent: r.percent), seconds: 3)
+            return
+        }
+        // Pin yếu: báo một lần khi xuống tới 20% và 10% lúc đang dùng pin.
+        if !ac, let last = lastPercent {
+            for mark in [20, 10] where last > mark && r.percent <= mark {
+                m.showTransient(.lowBattery(percent: r.percent), seconds: 5)
+                NSSound(named: NSSound.Name("Funk"))?.play()
+                break
+            }
+        }
     }
 }
 
@@ -1287,6 +2080,7 @@ final class NotchPanel: NSPanel {
 
 @MainActor
 final class NotchController {
+    static let expandedWidth: CGFloat = 640
     let model: NotchModel
     let panel: NotchPanel
     private var geo = NotchGeometry.current()
@@ -1376,8 +2170,8 @@ final class NotchController {
 
     private var expandedRect: CGRect {
         let f = geo.screenFrame
-        let w: CGFloat = 600 + 16 + 40
-        let h = geo.height + 200 + 30
+        let w: CGFloat = NotchController.expandedWidth + 16 + 40
+        let h = geo.height + 214 + 30
         return CGRect(x: f.midX - w / 2, y: f.maxY - h, width: w, height: h)
     }
 
@@ -1420,7 +2214,12 @@ final class NotchController {
 
     func expand(tab: Tab?) {
         collapseWork?.cancel()
-        if let tab { model.tab = tab }
+        if let tab {
+            model.tab = tab
+        } else if !model.expanded && model.transient == nil && model.recording == nil {
+            // Đang hiện dạng gọn của hẹn giờ hoặc nhạc thì mở thẳng mục đó.
+            if model.timerCompact { model.tab = .timer } else if model.musicCompact { model.tab = .media }
+        }
         guard !model.expanded else { return }
         model.expanded = true
         panel.ignoresMouseEvents = false
@@ -1506,8 +2305,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         PowerWatcher.shared = PowerWatcher(model: model)
         headphones = HeadphoneWatcher(model: model)
         recording = RecordingWatcher(model: model)
+        TimerEngine.shared = TimerEngine(model: model)
+        MediaWatcher.shared = MediaWatcher(model: model)
         HotKey.register()
         setupStatusItem()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        MediaWatcher.shared?.stop()
     }
 
     func setupStatusItem() {
