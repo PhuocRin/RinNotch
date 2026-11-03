@@ -1,7 +1,7 @@
 # GitHub tự build RinNotch trên máy Mac của GitHub:
 #  - Mỗi lần đẩy code lên main (hoặc bấm Run workflow): build thử, file .dmg nằm ở mục Artifacts.
 #  - Mỗi lần Publish một Release (tag vX.Y): ký app, gắn RinNotch-X.Y.dmg, RinNotch.dmg, .zip, .zip.sig vào Release.
-# Ký app cần secret RINNOTCH_SIGNING (cùng nội dung với RINDOCK_SIGNING của RinDock: chứng chỉ + khoá ký gói cập nhật).
+# Ký app cần secret RINNOTCH_SIGNING (chứng chỉ "Phuoc Rin RinNotch Signing" + khoá ký gói cập nhật, riêng của RinNotch).
 name: Build RinNotch
 
 on:
@@ -80,7 +80,7 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KCPW" "$KC" >/dev/null
           security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
           rm -f "$RUNNER_TEMP/sign.p12"
-          HASH="$(security find-certificate -c "Phuoc Rin Code Signing" -Z "$KC" | awk '/SHA-1/ {print $3}')"
+          HASH="$(security find-certificate -c "Phuoc Rin RinNotch Signing" -Z "$KC" | awk '/SHA-1/ {print $3}')"
           echo "Chứng chỉ: $HASH"
           echo "SIGN_IDENTITY=$HASH" >> "$GITHUB_ENV"
           echo "SIGN_KEYCHAIN=$KC" >> "$GITHUB_ENV"

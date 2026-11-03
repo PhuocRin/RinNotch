@@ -3158,9 +3158,9 @@ struct BugReportView: View {
 
 // MARK: - Cập nhật
 
-/// Kiểm tra gói cập nhật có đúng do Phước Rin phát hành không (cùng khoá với RinDock).
+/// Kiểm tra gói cập nhật có đúng do Phước Rin phát hành không. Khoá bí mật tương ứng nằm trong secret RINNOTCH_SIGNING.
 enum UpdateSecurity {
-    static let publicKeyBase64 = "cp4+XU5KBpctbtgRelU5WVsCOlPVuVl2X71we0GpjW0="
+    static let publicKeyBase64 = "S3XMA/KizwoiAT7mflAuiYRpD1jWsP3wJRch5GWgxlA="
 
     static func verify(_ data: Data, signature: Data) -> Bool {
         guard let raw = Data(base64Encoded: publicKeyBase64),
