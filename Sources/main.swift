@@ -753,6 +753,21 @@ struct ExpandedView: View {
                         }
                     }
                 }
+                // Dấu ? nhỏ: mở Mẹo dùng đúng mục đang xem.
+                Button {
+                    let topic = TipTopic(tab: m.tab)
+                    AppDelegate.shared?.controller.collapse()
+                    AppDelegate.shared?.showTips(topic)
+                } label: {
+                    Image(systemName: "questionmark")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.8))
+                        .frame(width: 30, height: 30)
+                        .background(Circle().fill(Color.white.opacity(0.06)))
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .help("Mẹo dùng")
                 // Trái tim nhỏ: bấm vào mới mở cửa sổ Ủng hộ tác giả, không tự hiện gì.
                 Button {
                     AppDelegate.shared?.controller.collapse()
@@ -3139,6 +3154,190 @@ struct SupportView: View {
     }
 }
 
+// MARK: - Mẹo dùng
+
+enum TipTopic: String, CaseIterable, Identifiable {
+    case start, media, shelf, clipboard, notes, timer, system, alerts
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .start: return L("Bắt đầu", "Basics")
+        case .media: return L("Nhạc", "Music")
+        case .shelf: return L("Kệ file", "File shelf")
+        case .clipboard: return L("Bộ nhớ tạm", "Clipboard")
+        case .notes: return L("Ghi chú", "Notes")
+        case .timer: return L("Hẹn giờ", "Timer")
+        case .system: return L("Hệ thống", "System")
+        case .alerts: return L("Thông báo", "Alerts")
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .start: return "sparkles"
+        case .media: return Tab.media.symbol
+        case .shelf: return Tab.shelf.symbol
+        case .clipboard: return Tab.clipboard.symbol
+        case .notes: return Tab.notes.symbol
+        case .timer: return Tab.timer.symbol
+        case .system: return Tab.system.symbol
+        case .alerts: return "bell.badge"
+        }
+    }
+
+    init(tab: Tab) {
+        switch tab {
+        case .media: self = .media
+        case .shelf: self = .shelf
+        case .clipboard: self = .clipboard
+        case .notes: self = .notes
+        case .timer: self = .timer
+        case .system: self = .system
+        }
+    }
+
+    /// Mỗi mẹo: biểu tượng + một câu ngắn.
+    var tips: [(String, String)] {
+        switch self {
+        case .start: return [
+            ("cursorarrow.rays", L("Rê chuột lên tai thỏ để mở, rê ra ngoài là tự thu lại. Máy không có tai thỏ thì rê lên giữa cạnh trên màn hình.",
+                                  "Hover over the notch to open it, move away to close. On Macs without a notch, hover the middle of the top edge.")),
+            ("tray.and.arrow.down", L("Kéo file thả lên tai thỏ là mở ngay Kệ file.",
+                                     "Drop a file on the notch to open the file shelf.")),
+            ("keyboard", L("⌥⌘N để ẩn / hiện RinNotch. Esc để thu tai thỏ lại.",
+                          "⌥⌘N hides / shows RinNotch. Esc closes the notch.")),
+            ("menubar.rectangle", L("Biểu tượng RinNotch trên thanh menu: Cài đặt, Mở mục, Kiểm tra cập nhật, Báo lỗi.",
+                                   "The RinNotch menu bar icon has Settings, Open, Check for Updates and Report a Bug.")),
+            ("questionmark.circle", L("Nút ? trên tai thỏ mở mẹo của mục đang xem. Trái tim là Ủng hộ tác giả.",
+                                     "The ? button in the notch opens tips for the current section. The heart is Support the author.")),
+        ]
+        case .media: return [
+            ("play.circle", L("Hiện bài hoặc video đang phát của app bất kỳ: Apple Music, Spotify, YouTube trên trình duyệt…",
+                             "Shows what's playing in any app: Apple Music, Spotify, YouTube in a browser…")),
+            ("forward.end", L("Bấm phát / dừng, bài trước / sau. Bấm vào thanh thời lượng để tua tới chỗ đó.",
+                             "Play / pause, previous / next. Click the progress bar to jump to that point.")),
+            ("rectangle.split.3x1", L("Đang phát thì tai thỏ hiện gọn hai bên, không cần mở ra. Tắt trong Cài đặt nếu không thích.",
+                                     "While playing, the notch shows a compact view on both sides. Turn it off in Settings.")),
+            ("arrow.triangle.2.circlepath", L("macOS chỉ chọn một app \"Đang phát\". App đó dừng mà Music hoặc Spotify đang phát thì RinNotch tự chuyển qua.",
+                                             "macOS picks one \"Now Playing\" app. If it pauses while Music or Spotify plays, RinNotch switches over.")),
+            ("lock.shield", L("Lần đầu macOS có thể hỏi quyền điều khiển Music / Spotify, bấm Cho phép.",
+                             "macOS may ask to let RinNotch control Music / Spotify the first time. Click Allow.")),
+        ]
+        case .shelf: return [
+            ("tray.and.arrow.down", L("Thả file lên tai thỏ để giữ tạm. App chỉ nhớ vị trí file, không sao chép thêm bản nào.",
+                                     "Drop files on the notch to keep them handy. Only the location is saved, no extra copy is made.")),
+            ("doc.on.doc", L("Kéo file ra = sao chép. Giữ ⌘ rồi mới kéo = chuyển file, chuyển xong file tự rời kệ.",
+                            "Drag a file out to copy it. Hold ⌘ before dragging to move it; moved files leave the shelf.")),
+            ("rectangle.dashed", L("Kéo chuột trên chỗ trống để chọn nhiều file, rồi kéo cả nhóm ra cùng lúc.",
+                                  "Drag a box over empty space to select several files, then drag them out together.")),
+            ("command", L("⌘ + bấm để chọn thêm hoặc bỏ một file, ⇧ + bấm để chọn liền một dãy. Bấm chỗ trống để bỏ chọn.",
+                         "⌘-click adds or removes a file, ⇧-click selects a range. Click empty space to deselect.")),
+            ("cursorarrow.click.2", L("Bấm đúp để mở. Chuột phải: Mở, AirDrop, Sao chép, Hiện trong Finder, Chọn tất cả, Bỏ khỏi kệ.",
+                                     "Double-click to open. Right-click: Open, AirDrop, Copy, Show in Finder, Select All, Remove.")),
+            ("square.and.arrow.up", L("Nút AirDrop và Sao chép làm trên file đang chọn, chưa chọn file nào thì làm cả kệ.",
+                              "The AirDrop and Copy buttons use the selection, or the whole shelf when nothing is selected.")),
+        ]
+        case .clipboard: return [
+            ("doc.on.clipboard", L("Giữ 20 thứ bạn copy gần nhất. Bấm một dòng để copy lại.",
+                                  "Keeps the last 20 things you copied. Click a row to copy it again.")),
+            ("lock", L("Mật khẩu copy từ trình quản lý mật khẩu không được lưu.",
+                      "Passwords copied from password managers are not saved.")),
+            ("memorychip", L("Chỉ giữ trong bộ nhớ: thoát app là xoá hết. Nút Xoá hết để xoá ngay.",
+                            "Kept in memory only: quitting the app clears it. Clear All removes everything now.")),
+        ]
+        case .notes: return [
+            ("return", L("Enter để xuống dòng như bình thường.", "Enter adds a new line.")),
+            ("command", L("⌘ Enter hoặc nút Lưu vào Notes để lưu vào app Ghi chú, thư mục RinNotch.",
+                         "⌘ Enter or Save to Notes saves it to the Notes app, in a RinNotch folder.")),
+            ("lock.shield", L("Lần đầu macOS hỏi quyền cho RinNotch dùng Ghi chú, bấm Cho phép.",
+                             "macOS asks to let RinNotch use Notes the first time. Click Allow.")),
+            ("pin", L("Đang gõ thì tai thỏ không tự thu lại. Bấm ra ngoài hoặc Esc để đóng.",
+                     "The notch stays open while you type. Click outside or press Esc to close.")),
+        ]
+        case .timer: return [
+            ("stopwatch", L("Bấm giờ chạy từ 00:00:00, hoặc Đếm ngược với các mốc có sẵn.",
+                           "Stopwatch counts up from 00:00:00, or pick a countdown preset.")),
+            ("rectangle.split.3x1", L("Đang chạy thì thời gian hiện gọn hai bên tai thỏ.",
+                                     "While running, the time shows beside the notch.")),
+            ("bell", L("Hết giờ đếm ngược thì có thông báo thả xuống kèm tiếng chuông.",
+                      "When a countdown ends, an alert drops down with a chime.")),
+        ]
+        case .system: return [
+            ("gauge.with.dots.needle.33percent", L("Xem CPU, RAM, tốc độ mạng, mức nhiệt và pin.",
+                                                  "Shows CPU, memory, network speed, thermal state and battery.")),
+            ("leaf", L("Chỉ đo khi mục này đang mở, không chạy ngầm.",
+                      "Only measures while this section is open.")),
+        ]
+        case .alerts: return [
+            ("airpodspro", L("Kết nối tai nghe Bluetooth: hiện đúng mẫu tai nghe và % pin (AirPods có pin từng bên và hộp).",
+                            "Bluetooth headphones: shows the model and battery (AirPods show each bud and the case).")),
+            ("bolt.fill", L("Cắm và rút sạc, pin yếu 20% và 10% đều có thông báo thả xuống.",
+                           "Plugging in, unplugging, and low battery at 20% and 10% all drop down an alert.")),
+            ("waveform", L("App đang ghi âm (Ghi âm, QuickTime…) thì tai thỏ hiện sóng âm và thời gian. Sóng âm cần quyền micro.",
+                          "When an app records audio (Voice Memos, QuickTime…), the notch shows a waveform and time. The waveform needs mic access.")),
+            ("switch.2", L("Bật / tắt từng loại trong Cài đặt.", "Turn each one on or off in Settings.")),
+        ]
+        }
+    }
+}
+
+enum Tips {
+    static var startTopic: TipTopic = .start
+}
+
+struct TipsView: View {
+    @State private var topic: TipTopic = Tips.startTopic
+
+    var body: some View {
+        VStack(spacing: 14) {
+            Text(L("Mẹo dùng RinNotch", "RinNotch Tips")).font(.system(size: 22, weight: .bold, design: .rounded))
+
+            HStack(spacing: 6) {
+                ForEach(TipTopic.allCases) { t in
+                    Button {
+                        topic = t
+                    } label: {
+                        VStack(spacing: 4) {
+                            Image(systemName: t.symbol).font(.system(size: 15, weight: .semibold))
+                            Text(t.title).font(.system(size: 10, weight: .medium)).lineLimit(1).minimumScaleFactor(0.8)
+                        }
+                        .frame(width: 54, height: 46)
+                        .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(topic == t ? Color.accentColor.opacity(0.22) : Color.primary.opacity(0.05)))
+                        .foregroundStyle(topic == t ? Color.accentColor : Color.primary.opacity(0.75))
+                        .contentShape(RoundedRectangle(cornerRadius: 12))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(Array(topic.tips.enumerated()), id: \.offset) { _, tip in
+                    HStack(alignment: .top, spacing: 12) {
+                        Image(systemName: tip.0)
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(Color.accentColor)
+                            .frame(width: 22)
+                        Text(tip.1)
+                            .font(.system(size: 13))
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                    }
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, minHeight: 250, alignment: .topLeading)
+            .softCard()
+
+            Text(L("Mở lại bất cứ lúc nào: biểu tượng RinNotch trên thanh menu → Mẹo dùng, hoặc nút ? trên tai thỏ.",
+                   "Open again anytime: RinNotch menu bar icon → Tips, or the ? button in the notch."))
+                .noteText().multilineTextAlignment(.center)
+        }
+        .panelStyle(width: 540)
+    }
+}
+
 // MARK: - Giới thiệu
 
 struct AboutView: View {
@@ -3691,6 +3890,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     lazy var settingsPanel = Panel { AnyView(SettingsView()) }
     lazy var aboutPanel = Panel { AnyView(AboutView()) }
     lazy var supportPanel = Panel { AnyView(SupportView()) }
+    lazy var tipsPanel = Panel { AnyView(TipsView()) }
     lazy var bugPanel = Panel { AnyView(BugReportView()) }
     lazy var updatePanel = Panel { [unowned self] in AnyView(UpdateView(updater: self.updater)) }
 
@@ -3727,7 +3927,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         updater.onInstallFailed = { [weak self] in self?.updatePanel.show() }
-        if updater.noteJustUpdated() { updatePanel.show() }
+        let justUpdated = updater.noteJustUpdated()
+        // Mẹo dùng tự mở một lần (cài mới hoặc vừa lên bản có Mẹo dùng); lúc đó không mở thêm cửa sổ Cập nhật.
+        if !UserDefaults.standard.bool(forKey: "tipsShown") {
+            UserDefaults.standard.set(true, forKey: "tipsShown")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                MainActor.assumeIsolated { self?.showTips(.start) }
+            }
+        } else if justUpdated {
+            updatePanel.show()
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
             MainActor.assumeIsolated { self?.updater.checkIfDue() }
         }
@@ -3786,6 +3995,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(item(L("Cài đặt…", "Settings…"), #selector(showSettings), key: ","))
         menu.addItem(item(L("Kiểm tra cập nhật…", "Check for Updates…"), #selector(showUpdate)))
         menu.addItem(.separator())
+        menu.addItem(item(L("Mẹo dùng", "Tips"), #selector(showTipsAction)))
         menu.addItem(item(L("Giới thiệu RinNotch", "About RinNotch"), #selector(showAbout)))
         menu.addItem(item(L("Báo lỗi…", "Report a Bug…"), #selector(showBug)))
         menu.addItem(item(L("Sao chép nhật ký chẩn đoán", "Copy Diagnostic Log"), #selector(copyDiag)))
@@ -3812,6 +4022,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func showSettings() { settingsPanel.show() }
     @objc func showAbout() { aboutPanel.show() }
     @objc func showSupport() { supportPanel.show() }
+    @objc func showTipsAction() { showTips(.start) }
+    func showTips(_ topic: TipTopic) {
+        Tips.startTopic = topic
+        tipsPanel.show()
+    }
     @objc func showBug() { bugPanel.show() }
     @objc func showUpdate() {
         if updater.available == nil, !updater.isBusy { updater.check() }

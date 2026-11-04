@@ -15,6 +15,7 @@ Trang tải và hướng dẫn cài có hình: https://phuocrin.com/rinnotch/
 - **Thông báo thả xuống**: tai nghe kết nối (kèm % pin AirPods, icon đúng mẫu), cắm / rút sạc, pin yếu 20% và 10%.
 - **Ghi âm**: app nào đang dùng micro thì hiện icon app, thời gian cộng dồn qua các lần tạm dừng và sóng âm.
 - **Cài đặt**: bật / tắt từng loại hiển thị, chọn mục mở khi rê chuột, mở cùng máy. ⌥⌘N ẩn / hiện, Esc thu lại.
+- **Mẹo dùng**: tự mở một lần khi cài, mở lại từ thanh menu → Mẹo dùng hoặc nút ? trên tai thỏ (mở đúng mục đang xem).
 - Tự cập nhật (gói cập nhật được ký số, kiểm tra trước khi cài), Báo lỗi kèm nhật ký, Ủng hộ tác giả.
 
 Cần macOS 14 trở lên, Mac chip Apple và Intel. Máy không có tai thỏ vẫn dùng được: rê chuột lên giữa cạnh trên màn hình.
@@ -42,7 +43,7 @@ Miễn phí, mã nguồn mở (MIT).
 
 ## English
 
-RinNotch turns the MacBook notch into a small hub that expands on hover: now playing (with Apple Music / Spotify fallback), a file shelf (drag a box to select several files, ⌘-drag to move), clipboard history, quick notes saved to Notes, timer / stopwatch, system stats, and drop-down alerts for headphones (with AirPods battery), charging and low battery. macOS 14+, Apple silicon and Intel. Free and open source (MIT).
+RinNotch turns the MacBook notch into a small hub that expands on hover: now playing (with Apple Music / Spotify fallback), a file shelf (drag a box to select several files, ⌘-drag to move), clipboard history, quick notes saved to Notes, timer / stopwatch, system stats, a built-in tips window (menu bar → Tips, or the ? button), and drop-down alerts for headphones (with AirPods battery), charging and low battery. macOS 14+, Apple silicon and Intel. Free and open source (MIT).
 
 Install: download `RinNotch.dmg` from Releases, drag to Applications. First launch is blocked because the app isn't notarized: click **Done** (not Move to Trash) → System Settings → Privacy & Security → Security → **Open Anyway**.
 
