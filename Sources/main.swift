@@ -4041,7 +4041,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     @objc func showBug() { bugPanel.show() }
     @objc func showUpdate() {
-        if updater.available == nil, !updater.isBusy { updater.check() }
+        // Luôn hỏi lại GitHub: bản tìm thấy lần trước có thể đã cũ (vd thấy 1.2 rồi Phước ra tiếp 1.2.1).
+        if !updater.isBusy { updater.check() }
         updatePanel.show()
     }
 
