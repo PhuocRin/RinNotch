@@ -2989,13 +2989,17 @@ struct AppIconView: View {
 @MainActor
 final class Panel {
     private var window: NSWindow?
+    private var resignObserver: NSObjectProtocol?
     private let content: () -> AnyView
 
     init(_ content: @escaping () -> AnyView) { self.content = content }
 
     func close() { window?.close() }
 
-    func show() {
+    /// attention = app tự mở (có bản mới, vừa cập nhật, mẹo lần đầu): từ macOS 14, app trên thanh menu
+    /// không được tự giành quyền lên trước nên cửa sổ dễ bị kẹt sau app đang dùng. Lúc đó cho cửa sổ nổi
+    /// trên cùng ở đúng màn hình đang dùng, tới khi người dùng bấm vào rồi chuyển đi nơi khác.
+    func show(attention: Bool = false) {
         let controller = NSHostingController(rootView: content())
         controller.sizingOptions = .preferredContentSize
         if let w = window {
@@ -3009,11 +3013,19 @@ final class Panel {
             w.isReleasedWhenClosed = false
             w.standardWindowButton(.miniaturizeButton)?.isHidden = true
             w.standardWindowButton(.zoomButton)?.isHidden = true
+            w.collectionBehavior.insert(.moveToActiveSpace)
+            resignObserver = NotificationCenter.default.addObserver(
+                forName: NSWindow.didResignKeyNotification, object: w, queue: .main) { [weak w] _ in
+                MainActor.assumeIsolated { w?.level = .normal }
+            }
             window = w
         }
-        if let w = window, !w.isVisible { w.center() }
-        NSApp.activate(ignoringOtherApps: true)
-        window?.makeKeyAndOrderFront(nil)
+        guard let w = window else { return }
+        if !w.isVisible { w.center() }
+        w.level = attention ? .floating : .normal
+        NSApp.activate()
+        w.makeKeyAndOrderFront(nil)
+        w.orderFrontRegardless()
     }
 }
 
@@ -3922,20 +3934,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             switch Prefs.updateMode {
             case .auto: self.updater.install(rel)
-            case .ask: self.updatePanel.show()
+            case .ask: self.updatePanel.show(attention: true)
             case .notify: self.rebuildMenu()
             }
         }
-        updater.onInstallFailed = { [weak self] in self?.updatePanel.show() }
+        updater.onInstallFailed = { [weak self] in self?.updatePanel.show(attention: true) }
         let justUpdated = updater.noteJustUpdated()
         // Mẹo dùng tự mở một lần (cài mới hoặc vừa lên bản có Mẹo dùng); lúc đó không mở thêm cửa sổ Cập nhật.
         if !UserDefaults.standard.bool(forKey: "tipsShown") {
             UserDefaults.standard.set(true, forKey: "tipsShown")
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-                MainActor.assumeIsolated { self?.showTips(.start) }
+                MainActor.assumeIsolated { self?.showTips(.start, attention: true) }
             }
         } else if justUpdated {
-            updatePanel.show()
+            updatePanel.show(attention: true)
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
             MainActor.assumeIsolated { self?.updater.checkIfDue() }
@@ -4023,9 +4035,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func showAbout() { aboutPanel.show() }
     @objc func showSupport() { supportPanel.show() }
     @objc func showTipsAction() { showTips(.start) }
-    func showTips(_ topic: TipTopic) {
+    func showTips(_ topic: TipTopic, attention: Bool = false) {
         Tips.startTopic = topic
-        tipsPanel.show()
+        tipsPanel.show(attention: attention)
     }
     @objc func showBug() { bugPanel.show() }
     @objc func showUpdate() {
