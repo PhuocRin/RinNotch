@@ -3628,6 +3628,21 @@ final class Updater: ObservableObject {
         check(background: true)
     }
 
+    private var retryWork: DispatchWorkItem?
+    private var retryCount = 0
+
+    /// Hỏi lại sau 3 phút khi bản mới chưa có đủ gói cài (tối đa 6 lần, khỏi tốn lượt hỏi GitHub).
+    private func scheduleRetry() {
+        guard retryCount < 6 else { return }
+        retryCount += 1
+        retryWork?.cancel()
+        let w = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.check(background: true) }
+        }
+        retryWork = w
+        DispatchQueue.main.asyncAfter(deadline: .now() + 180, execute: w)
+    }
+
     func check(background: Bool = false) {
         if isBusy { return }
         if !background { state = .checking }
@@ -3642,14 +3657,22 @@ final class Updater: ObservableObject {
             let (data, resp) = try await URLSession.shared.data(for: req)
             guard (resp as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
             let rel = try JSONDecoder().decode(Release.self, from: data)
-            Prefs.lastUpdateCheck = Date()
             if Updater.isNewer(rel.version, than: AppInfo.version) {
-                if background, available?.version == rel.version { return }
+                // Vừa bấm phát hành thì GitHub đã coi là bản mới nhất nhưng gói cài phải ~5 phút sau mới gắn vào.
+                // Lúc đó chưa báo (kiểm tra nền) và hẹn hỏi lại, để không kẹt ở nút tải thủ công.
+                if !rel.canAutoInstall {
+                    scheduleRetry()
+                    if background { return }
+                } else {
+                    Prefs.lastUpdateCheck = Date()
+                }
+                if background, let a = available, a.version == rel.version, a.canAutoInstall == rel.canAutoInstall { return }
                 state = .available(rel)
                 onChange?()
                 if background { onFoundInBackground?(rel) }
                 return
             }
+            Prefs.lastUpdateCheck = Date()
             if !background { state = .upToDate }
         } catch {
             if !background { state = .failed }
