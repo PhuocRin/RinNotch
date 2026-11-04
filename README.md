@@ -7,7 +7,7 @@ Trang tải và hướng dẫn cài có hình: https://phuocrin.com/rinnotch/
 ## Tính năng
 
 - **Nhạc / video**: ảnh bìa, tên bài, thanh thời lượng (bấm để tua), lùi / phát / tới. Đang phát thì hai bên tai thỏ hiện ảnh bìa và cột nhạc. App "Đang phát" của macOS bị dừng mà Apple Music hay Spotify vẫn chạy thì tự chuyển qua bài đó.
-- **Kệ file**: kéo file thả lên tai thỏ để giữ tạm, có ảnh xem trước. Kéo ra = sao chép, giữ ⌘ khi kéo = chuyển file. Chuột phải: Mở, AirDrop, Sao chép, Hiện trong Finder.
+- **Kệ file**: kéo file thả lên tai thỏ để giữ tạm, có ảnh xem trước. Kéo chuột trên chỗ trống để chọn nhiều file, ⌘/⇧ + bấm để chọn thêm, rồi kéo cả nhóm ra cùng lúc. Kéo ra = sao chép, giữ ⌘ khi kéo = chuyển file. Chuột phải: Mở, AirDrop, Sao chép, Hiện trong Finder, Chọn tất cả.
 - **Bộ nhớ tạm**: 20 mục gần nhất, bấm để copy lại. Chỉ giữ trong máy, bỏ qua mật khẩu.
 - **Ghi chú nhanh**: Enter xuống dòng, ⌘ Enter lưu vào app Notes (thư mục RinNotch).
 - **Hẹn giờ**: bấm giờ từ 00:00:00 hoặc đếm ngược 1 phút tới 1 giờ, hết giờ có chuông.
@@ -42,7 +42,7 @@ Miễn phí, mã nguồn mở (MIT).
 
 ## English
 
-RinNotch turns the MacBook notch into a small hub that expands on hover: now playing (with Apple Music / Spotify fallback), a file shelf (⌘-drag to move), clipboard history, quick notes saved to Notes, timer / stopwatch, system stats, and drop-down alerts for headphones (with AirPods battery), charging and low battery. macOS 14+, Apple silicon and Intel. Free and open source (MIT).
+RinNotch turns the MacBook notch into a small hub that expands on hover: now playing (with Apple Music / Spotify fallback), a file shelf (drag a box to select several files, ⌘-drag to move), clipboard history, quick notes saved to Notes, timer / stopwatch, system stats, and drop-down alerts for headphones (with AirPods battery), charging and low battery. macOS 14+, Apple silicon and Intel. Free and open source (MIT).
 
 Install: download `RinNotch.dmg` from Releases, drag to Applications. First launch is blocked because the app isn't notarized: click **Done** (not Move to Trash) → System Settings → Privacy & Security → Security → **Open Anyway**.
 

@@ -194,6 +194,9 @@ final class NotchModel: ObservableObject {
     @Published var notchWidth: CGFloat = 190
     @Published var notchHeight: CGFloat = 32
     @Published var shelf: [URL] = []
+    @Published var shelfSelection: Set<URL> = []
+    var shelfAnchor: URL?
+    var marqueeActive = false
     @Published var clips: [ClipItem] = []
     @Published var notes: [NoteItem] = []
     @Published var noteDraft = ""
@@ -240,14 +243,20 @@ final class NotchModel: ObservableObject {
         for u in urls where !shelf.contains(u) { shelf.append(u) }
         saveShelf()
     }
-    func removeFromShelf(_ url: URL) {
-        shelf.removeAll { $0 == url }
+    func removeFromShelf(_ url: URL) { removeFromShelf([url]) }
+    func removeFromShelf(_ urls: [URL]) {
+        let drop = Set(urls)
+        shelf.removeAll { drop.contains($0) }
+        shelfSelection.subtract(drop)
         saveShelf()
     }
     func clearShelf() {
         shelf.removeAll()
+        shelfSelection = []
         saveShelf()
     }
+    /// File đang chọn, theo đúng thứ tự trên kệ.
+    var selectedShelf: [URL] { shelf.filter { shelfSelection.contains($0) } }
     private func saveShelf() {
         UserDefaults.standard.set(shelf.map(\.path), forKey: "shelf")
     }
@@ -1211,6 +1220,41 @@ struct Sparkline: Shape {
 
 struct ShelfView: View {
     @ObservedObject var m: NotchModel
+    /// Khung chọn đang kéo (toạ độ trong hàng file).
+    @State private var marquee: CGRect?
+    @State private var marqueeBase: Set<URL> = []
+
+    static let rowPad: CGFloat = 4
+
+    /// Vị trí từng ô file trong hàng: mỗi ô rộng cố định nên tính thẳng, không cần đo.
+    private func itemRect(_ i: Int) -> CGRect {
+        CGRect(x: Self.rowPad + CGFloat(i) * (ShelfItem.width + 10), y: Self.rowPad,
+               width: ShelfItem.width, height: ShelfItem.height)
+    }
+
+    private var marqueeGesture: some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .named("shelfRow"))
+            .onChanged { v in
+                if marquee == nil {
+                    // Giữ ⌘ hoặc ⇧ khi kéo khung thì cộng thêm vào vùng chọn cũ.
+                    let mods = NSEvent.modifierFlags
+                    marqueeBase = mods.contains(.command) || mods.contains(.shift) ? m.shelfSelection : []
+                    m.marqueeActive = true
+                }
+                let r = CGRect(x: min(v.startLocation.x, v.location.x), y: min(v.startLocation.y, v.location.y),
+                               width: abs(v.location.x - v.startLocation.x), height: abs(v.location.y - v.startLocation.y))
+                marquee = r
+                var sel = marqueeBase
+                if r.width > 2 || r.height > 2 {
+                    for (i, u) in m.shelf.enumerated() where itemRect(i).intersects(r) { sel.insert(u) }
+                }
+                if sel != m.shelfSelection { m.shelfSelection = sel }
+            }
+            .onEnded { _ in
+                marquee = nil
+                m.marqueeActive = false
+            }
+    }
 
     var body: some View {
         if m.shelf.isEmpty {
@@ -1228,21 +1272,50 @@ struct ShelfView: View {
                     .foregroundStyle(.white.opacity(0.8))
                 )
         } else {
-            VStack(alignment: .leading, spacing: 10) {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 10) {
-                        ForEach(m.shelf, id: \.self) { url in
-                            ShelfItem(url: url, m: m)
+            let sel = m.selectedShelf
+            VStack(alignment: .leading, spacing: 8) {
+                GeometryReader { geo in
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 10) {
+                            ForEach(m.shelf, id: \.self) { url in
+                                ShelfItem(url: url, m: m, selected: m.shelfSelection.contains(url))
+                            }
                         }
+                        .padding(Self.rowPad)
+                        .frame(minWidth: geo.size.width, minHeight: geo.size.height, alignment: .topLeading)
+                        // Nền trong suốt nhận thao tác: kéo khung để chọn, bấm chỗ trống để bỏ chọn.
+                        .background(
+                            Color.white.opacity(0.001)
+                                .contentShape(Rectangle())
+                                .gesture(marqueeGesture)
+                        )
+                        .overlay(alignment: .topLeading) {
+                            if let r = marquee, r.width > 2 || r.height > 2 {
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(Color.accentColor.opacity(0.18))
+                                    .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color.accentColor.opacity(0.85), lineWidth: 1))
+                                    .frame(width: r.width, height: r.height)
+                                    .offset(x: r.minX, y: r.minY)
+                                    .allowsHitTesting(false)
+                            }
+                        }
+                        .coordinateSpace(name: "shelfRow")
                     }
                 }
+                .frame(height: ShelfItem.height + Self.rowPad * 2 + 6)
                 HStack(spacing: 8) {
-                    Text("Kéo ra = sao chép · giữ ⌘ = chuyển · chuột phải: thêm")
+                    Text(sel.isEmpty ? "Kéo chuột để chọn nhiều · kéo ra = sao chép · giữ ⌘ = chuyển"
+                                     : "Đã chọn \(sel.count) file · kéo ra là đi cả nhóm")
                         .font(.system(size: 11)).foregroundStyle(.white.opacity(0.55))
-                    Spacer()
-                    Button("AirDrop") { Actions.airDrop(m.shelf) }.buttonStyle(PillButton(prominent: true))
-                    Button("Sao chép") { Actions.copyFiles(m.shelf) }.buttonStyle(PillButton())
-                    Button("Xoá kệ") { m.clearShelf() }.buttonStyle(PillButton())
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    Button("AirDrop") { Actions.airDrop(sel.isEmpty ? m.shelf : sel) }.buttonStyle(PillButton(prominent: true))
+                    Button("Sao chép") { Actions.copyFiles(sel.isEmpty ? m.shelf : sel) }.buttonStyle(PillButton())
+                    if sel.isEmpty {
+                        Button("Xoá kệ") { m.clearShelf() }.buttonStyle(PillButton())
+                    } else {
+                        Button("Bỏ khỏi kệ") { m.removeFromShelf(sel) }.buttonStyle(PillButton())
+                    }
                 }
             }
         }
@@ -1250,8 +1323,12 @@ struct ShelfView: View {
 }
 
 struct ShelfItem: View {
+    static let width: CGFloat = 92
+    static let height: CGFloat = 82
+
     let url: URL
     @ObservedObject var m: NotchModel
+    var selected = false
 
     var body: some View {
         let exists = FileManager.default.fileExists(atPath: url.path)
@@ -1264,8 +1341,9 @@ struct ShelfItem: View {
                 .truncationMode(.middle)
                 .frame(width: 78)
         }
-        .padding(7)
-        .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.07)))
+        .frame(width: Self.width, height: Self.height)
+        .background(RoundedRectangle(cornerRadius: 12).fill(selected ? Color.accentColor.opacity(0.35) : Color.white.opacity(0.07)))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.accentColor.opacity(selected ? 0.95 : 0), lineWidth: 1.5))
         .opacity(exists ? 1 : 0.45)
         .overlay(FileDragArea(url: url, m: m))
         .help(url.path)
@@ -1273,68 +1351,91 @@ struct ShelfItem: View {
 }
 
 /// Vùng kéo file ra khỏi kệ: kéo thường = sao chép, giữ ⌘ khi kéo = chuyển file.
-/// Bấm đúp để mở, chuột phải để xem thêm.
+/// Bấm để chọn, ⌘/⇧ + bấm để chọn thêm, bấm đúp để mở, chuột phải để xem thêm.
 struct FileDragArea: NSViewRepresentable {
     let url: URL
     let m: NotchModel
 
     func makeNSView(context: Context) -> FileDragNSView {
         let v = FileDragNSView()
-        update(v)
+        v.url = url
+        v.model = m
         return v
     }
 
-    func updateNSView(_ v: FileDragNSView, context: Context) { update(v) }
-
-    private func update(_ v: FileDragNSView) {
+    func updateNSView(_ v: FileDragNSView, context: Context) {
         v.url = url
-        let model = m
-        let u = url
-        v.onStart = { model.draggingOut = true }
-        v.onEnd = { moved in
-            model.draggingOut = false
-            if moved {
-                model.removeFromShelf(u)
-                Diag.log("Đã chuyển \(u.lastPathComponent) ra khỏi kệ")
-            }
-        }
-        v.onRemove = { model.removeFromShelf(u) }
+        v.model = m
     }
 }
 
 final class FileDragNSView: NSView, NSDraggingSource {
     var url = URL(fileURLWithPath: "/")
-    var onStart: (() -> Void)?
-    var onEnd: ((Bool) -> Void)?
-    var onRemove: (() -> Void)?
+    weak var model: NotchModel?
     private var downEvent: NSEvent?
+    private var dragged: [URL] = []
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    /// Các file sẽ tác động: cả vùng chọn nếu file này nằm trong đó, không thì chỉ file này.
+    private var targets: [URL] {
+        guard let m = model, m.shelfSelection.contains(url) else { return [url] }
+        let sel = m.selectedShelf
+        return sel.isEmpty ? [url] : sel
+    }
+
     override func mouseDown(with event: NSEvent) {
         if event.clickCount == 2 {
-            if FileManager.default.fileExists(atPath: url.path) { NSWorkspace.shared.open(url) }
+            for u in targets where FileManager.default.fileExists(atPath: u.path) { NSWorkspace.shared.open(u) }
             downEvent = nil
             return
         }
         downEvent = event
     }
 
-    override func mouseUp(with event: NSEvent) { downEvent = nil }
+    override func mouseUp(with event: NSEvent) {
+        // Bấm rồi thả, không kéo: chọn file.
+        guard downEvent != nil, let m = model else { downEvent = nil; return }
+        downEvent = nil
+        let mods = event.modifierFlags
+        if mods.contains(.shift), let anchor = m.shelfAnchor,
+           let a = m.shelf.firstIndex(of: anchor), let b = m.shelf.firstIndex(of: url) {
+            m.shelfSelection.formUnion(m.shelf[min(a, b)...max(a, b)])
+        } else if mods.contains(.command) || mods.contains(.shift) {
+            if m.shelfSelection.contains(url) { m.shelfSelection.remove(url) } else { m.shelfSelection.insert(url) }
+            m.shelfAnchor = url
+        } else {
+            m.shelfSelection = [url]
+            m.shelfAnchor = url
+        }
+    }
 
     override func mouseDragged(with event: NSEvent) {
-        guard let down = downEvent, FileManager.default.fileExists(atPath: url.path) else { return }
+        guard let down = downEvent else { return }
         let dx = event.locationInWindow.x - down.locationInWindow.x
         let dy = event.locationInWindow.y - down.locationInWindow.y
         guard dx * dx + dy * dy > 16 else { return }
         downEvent = nil
-        let item = NSDraggingItem(pasteboardWriter: url as NSURL)
-        let icon = NSWorkspace.shared.icon(forFile: url.path)
-        icon.size = NSSize(width: 56, height: 56)
+        // Kéo file chưa được chọn thì chỉ kéo riêng file đó (giống Finder).
+        if let m = model, !m.shelfSelection.contains(url) {
+            m.shelfSelection = [url]
+            m.shelfAnchor = url
+        }
+        let urls = targets.filter { FileManager.default.fileExists(atPath: $0.path) }
+        guard !urls.isEmpty else { return }
+        dragged = urls
         let p = convert(down.locationInWindow, from: nil)
-        item.setDraggingFrame(NSRect(x: p.x - 28, y: p.y - 28, width: 56, height: 56), contents: icon)
-        onStart?()
-        beginDraggingSession(with: [item], event: down, source: self)
+        let items: [NSDraggingItem] = urls.enumerated().map { i, u in
+            let item = NSDraggingItem(pasteboardWriter: u as NSURL)
+            let icon = NSWorkspace.shared.icon(forFile: u.path)
+            icon.size = NSSize(width: 56, height: 56)
+            let shift = CGFloat(min(i, 4)) * 5
+            item.setDraggingFrame(NSRect(x: p.x - 28 + shift, y: p.y - 28 - shift, width: 56, height: 56), contents: icon)
+            return item
+        }
+        model?.draggingOut = true
+        let session = beginDraggingSession(with: items, event: down, source: self)
+        session.draggingFormation = .pile
     }
 
     func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
@@ -1344,22 +1445,33 @@ final class FileDragNSView: NSView, NSDraggingSource {
     }
 
     func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
+        model?.draggingOut = false
         let moved = operation.contains(.move) || operation.contains(.generic)
         // Chỉ coi là đã chuyển khi file gốc thật sự không còn ở chỗ cũ.
-        let gone = !FileManager.default.fileExists(atPath: url.path)
-        onEnd?(moved && gone)
+        let gone = moved ? dragged.filter { !FileManager.default.fileExists(atPath: $0.path) } : []
+        if !gone.isEmpty {
+            model?.removeFromShelf(gone)
+            Diag.log("Đã chuyển \(gone.count) file ra khỏi kệ")
+        }
+        dragged = []
     }
 
     override func menu(for event: NSEvent) -> NSMenu? {
+        guard let m = model else { return nil }
+        if !m.shelfSelection.contains(url) {
+            m.shelfSelection = [url]
+            m.shelfAnchor = url
+        }
+        let us = targets
+        let n = us.count
         let menu = NSMenu()
-        let u = url
-        menu.addItem(ClosureMenuItem("Mở") { NSWorkspace.shared.open(u) })
-        menu.addItem(ClosureMenuItem("Gửi AirDrop") { Actions.airDrop([u]) })
-        menu.addItem(ClosureMenuItem("Sao chép") { Actions.copyFiles([u]) })
-        menu.addItem(ClosureMenuItem("Hiện trong Finder") { NSWorkspace.shared.activateFileViewerSelecting([u]) })
+        menu.addItem(ClosureMenuItem(n > 1 ? "Mở \(n) file" : "Mở") { for u in us { NSWorkspace.shared.open(u) } })
+        menu.addItem(ClosureMenuItem(n > 1 ? "Gửi AirDrop \(n) file" : "Gửi AirDrop") { Actions.airDrop(us) })
+        menu.addItem(ClosureMenuItem(n > 1 ? "Sao chép \(n) file" : "Sao chép") { Actions.copyFiles(us) })
+        menu.addItem(ClosureMenuItem("Hiện trong Finder") { NSWorkspace.shared.activateFileViewerSelecting(us) })
         menu.addItem(.separator())
-        let remove = onRemove
-        menu.addItem(ClosureMenuItem("Bỏ khỏi kệ") { remove?() })
+        menu.addItem(ClosureMenuItem("Chọn tất cả") { [weak m] in m?.shelfSelection = Set(m?.shelf ?? []) })
+        menu.addItem(ClosureMenuItem(n > 1 ? "Bỏ \(n) file khỏi kệ" : "Bỏ khỏi kệ") { [weak m] in m?.removeFromShelf(us) })
         return menu
     }
 }
@@ -2612,7 +2724,7 @@ final class NotchController {
     func scheduleCollapse(force: Bool) {
         guard model.expanded else { return }
         if !force {
-            if model.draggingOut { return }
+            if model.draggingOut || model.marqueeActive { return }
             // Đang gõ ghi chú thì không tự thu lại, bấm ra ngoài hoặc Esc mới thu.
             if panel.isKeyWindow && model.tab == .notes && expandedRect.contains(NSEvent.mouseLocation) { return }
             if panel.isKeyWindow && model.tab == .notes && !model.noteDraft.isEmpty { return }
@@ -2634,6 +2746,8 @@ final class NotchController {
         guard model.expanded else { return }
         model.expanded = false
         model.dropTargeted = false
+        model.shelfSelection = []
+        model.marqueeActive = false
         panel.ignoresMouseEvents = true
         if panel.isKeyWindow {
             _ = panel.makeFirstResponder(nil)
