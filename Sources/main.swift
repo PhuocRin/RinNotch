@@ -253,6 +253,7 @@ final class NotchModel: ObservableObject {
     func clearShelf() {
         shelf.removeAll()
         shelfSelection = []
+        shelfAnchor = nil
         saveShelf()
     }
     /// File đang chọn, theo đúng thứ tự trên kệ.
@@ -684,32 +685,6 @@ struct Waveform: View {
     }
 }
 
-struct BatteryGlyph: View {
-    let percent: Int
-    let charging: Bool
-    @State private var fill: CGFloat = 0
-
-    var body: some View {
-        HStack(spacing: 1.5) {
-            ZStack(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 3.5)
-                    .stroke(Color.white.opacity(0.55), lineWidth: 1.3)
-                    .frame(width: 25, height: 12)
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(charging ? Color.green : Color.white.opacity(0.85))
-                    .frame(width: max(2, 21 * fill), height: 8)
-                    .padding(.leading, 2)
-            }
-            RoundedRectangle(cornerRadius: 1).fill(Color.white.opacity(0.55)).frame(width: 2, height: 5)
-        }
-        .onAppear {
-            withAnimation(.spring(response: 0.9, dampingFraction: 0.85).delay(0.2)) {
-                fill = CGFloat(min(max(percent, 0), 100)) / 100
-            }
-        }
-    }
-}
-
 // MARK: Dạng bung
 
 struct ExpandedView: View {
@@ -1039,6 +1014,8 @@ final class TimerEngine {
 
 @MainActor
 final class SystemMonitor: ObservableObject {
+    /// Cổng host lấy một lần: mỗi lần gọi mach_host_self() lại thêm một tham chiếu cổng mà không trả.
+    nonisolated static let host: mach_port_t = mach_host_self()
     @Published var cpu: Double = 0
     @Published var cpuHistory: [Double] = Array(repeating: 0, count: 30)
     @Published var ramUsed: Double = 0
@@ -1073,7 +1050,7 @@ final class SystemMonitor: ObservableObject {
         var info = host_cpu_load_info()
         let kr = withUnsafeMutablePointer(to: &info) {
             $0.withMemoryRebound(to: integer_t.self, capacity: Int(size)) {
-                host_statistics(mach_host_self(), HOST_CPU_LOAD_INFO, $0, &size)
+                host_statistics(SystemMonitor.host, HOST_CPU_LOAD_INFO, $0, &size)
             }
         }
         if kr == KERN_SUCCESS {
@@ -1092,7 +1069,7 @@ final class SystemMonitor: ObservableObject {
         var c = mach_msg_type_number_t(MemoryLayout<vm_statistics64_data_t>.stride / MemoryLayout<integer_t>.stride)
         let kr2 = withUnsafeMutablePointer(to: &vm) {
             $0.withMemoryRebound(to: integer_t.self, capacity: Int(c)) {
-                host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &c)
+                host_statistics64(SystemMonitor.host, HOST_VM_INFO64, $0, &c)
             }
         }
         if kr2 == KERN_SUCCESS {
@@ -1463,12 +1440,18 @@ final class FileDragNSView: NSView, NSDraggingSource {
         model?.draggingOut = false
         let moved = operation.contains(.move) || operation.contains(.generic)
         // Chỉ coi là đã chuyển khi file gốc thật sự không còn ở chỗ cũ.
-        let gone = moved ? dragged.filter { !FileManager.default.fileExists(atPath: $0.path) } : []
-        if !gone.isEmpty {
-            model?.removeFromShelf(gone)
+        let files = dragged
+        dragged = []
+        guard moved else { return }
+        let removeGone: () -> Void = { [weak self] in
+            let gone = files.filter { !FileManager.default.fileExists(atPath: $0.path) }
+            guard !gone.isEmpty, let m = self?.model else { return }
+            m.removeFromShelf(gone)
             Diag.log("Đã chuyển \(gone.count) file ra khỏi kệ")
         }
-        dragged = []
+        removeGone()
+        // Chuyển sang ổ đĩa khác thì Finder chép xong mới xoá file gốc: kiểm lại sau 2 giây.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { MainActor.assumeIsolated { removeGone() } }
     }
 
     override func menu(for event: NSEvent) -> NSMenu? {
@@ -1665,7 +1648,7 @@ enum NotesSaver {
     static func save(_ m: NotchModel) {
         let text = m.noteDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        var item = NoteItem(text: text, date: Date(), savedToNotes: false)
+        let item = NoteItem(text: text, date: Date(), savedToNotes: false)
         m.notes.insert(item, at: 0)
         m.noteDraft = ""
         m.noteStatus = "Đang lưu vào Notes…"
@@ -1676,9 +1659,16 @@ enum NotesSaver {
             .replacingOccurrences(of: "<", with: "&lt;")
             .replacingOccurrences(of: ">", with: "&gt;")
             .replacingOccurrences(of: "\n", with: "<br>")
+        // Nội dung đi qua file tạm: ghi chú bắt đầu bằng "-" (gạch đầu dòng) mà đưa thẳng làm tham số
+        // thì osascript hiểu nhầm là tuỳ chọn và không lưu được.
+        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("rinnotch-note-\(UUID().uuidString).html")
+        do { try html.write(to: tmp, atomically: true, encoding: .utf8) } catch {
+            m.noteStatus = "Chưa lưu được vào Notes, ghi chú vẫn được giữ trong app."
+            return
+        }
         let script = [
             "on run argv",
-            "set t to item 1 of argv",
+            "set t to read (POSIX file (item 1 of argv)) as «class utf8»",
             "tell application \"Notes\"",
             "if not (exists folder \"RinNotch\") then make new folder with properties {name:\"RinNotch\"}",
             "make new note at folder \"RinNotch\" with properties {body:t}",
@@ -1687,12 +1677,13 @@ enum NotesSaver {
         ]
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        p.arguments = script.flatMap { ["-e", $0] } + [html]
+        p.arguments = script.flatMap { ["-e", $0] } + [tmp.path]
         let err = Pipe()
         p.standardError = err
         p.standardOutput = Pipe()
         let id = item.id
         p.terminationHandler = { proc in
+            try? FileManager.default.removeItem(at: tmp)
             let ok = proc.terminationStatus == 0
             let msg = String(data: err.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
             Task { @MainActor in
@@ -1708,7 +1699,7 @@ enum NotesSaver {
             }
         }
         do { try p.run() } catch {
-            item.savedToNotes = false
+            try? FileManager.default.removeItem(at: tmp)
             m.noteStatus = "Chưa lưu được vào Notes, ghi chú vẫn được giữ trong app."
         }
     }
@@ -1987,6 +1978,7 @@ final class RecordingWatcher {
     private let m: NotchModel
     private var timer: Timer?
     private var engine: AVAudioEngine?
+    private var meterRetryAfter: Date?
     private var lastPush = Date.distantPast
     private var requesting = false
     private var peakSinceLog: CGFloat = 0
@@ -2026,7 +2018,10 @@ final class RecordingWatcher {
                 )
                 Diag.log("Micro đang được dùng bởi \(app.localizedName ?? "?") (\(app.bundleIdentifier ?? "?"))")
             }
-            startMeter()
+            // Đổi micro giữa chừng (vd vừa kết nối AirPods) thì engine tự dừng: tắt hẳn để mở lại.
+            if let e = engine, !e.isRunning { stopMeter() }
+            // Tắt "App đang ghi âm" trong Cài đặt thì RinNotch không mở micro.
+            if Prefs.showRecording { startMeter() } else { stopMeter() }
         } else if var s = session {
             if !s.paused {
                 s.accumulated += now.timeIntervalSince(s.segmentStart ?? now)
@@ -2052,6 +2047,8 @@ final class RecordingWatcher {
 
     private func startMeter() {
         guard engine == nil, !requesting else { return }
+        // Mở micro lỗi thì đợi 30 giây mới thử lại, khỏi tạo engine mỗi 0,5 giây và tràn nhật ký.
+        if let t = meterRetryAfter, Date() < t { return }
         let status = AVCaptureDevice.authorizationStatus(for: .audio)
         switch status {
         case .authorized:
@@ -2079,6 +2076,7 @@ final class RecordingWatcher {
         Diag.log("Định dạng micro: \(fmt.channelCount) kênh, \(Int(fmt.sampleRate)) Hz")
         guard fmt.channelCount > 0, fmt.sampleRate > 0 else {
             Diag.log("Micro không có kênh nào, bỏ qua")
+            meterRetryAfter = Date().addingTimeInterval(30)
             return
         }
         input.installTap(onBus: 0, bufferSize: 1024, format: fmt, block: RecordingWatcher.makeTap(self))
@@ -2088,6 +2086,7 @@ final class RecordingWatcher {
             Diag.log("Bắt đầu đo sóng âm")
         } catch {
             input.removeTap(onBus: 0)
+            meterRetryAfter = Date().addingTimeInterval(30)
             Diag.log("Không mở được micro: \(error.localizedDescription)")
         }
     }
@@ -2129,6 +2128,7 @@ final class RecordingWatcher {
     }
 
     private func stopMeter() {
+        guard engine != nil else { return }
         engine?.inputNode.removeTap(onBus: 0)
         engine?.stop()
         engine = nil
@@ -2159,6 +2159,7 @@ final class MediaWatcher {
     private var input: FileHandle?
     private var buffer = Data()
     private var restarts = 0
+    private var startedAt: Date?
     private(set) var statusText: String?
 
     init(model: NotchModel) {
@@ -2182,14 +2183,16 @@ final class MediaWatcher {
         p.standardOutput = out
         p.standardInput = inp
         p.standardError = err
+        // Hết dữ liệu (trình đọc đã thoát) thì gỡ handler, nếu không handler chạy liên tục tốn CPU.
         out.fileHandleForReading.readabilityHandler = { [weak self] h in
             let d = h.availableData
-            guard !d.isEmpty else { return }
+            guard !d.isEmpty else { h.readabilityHandler = nil; return }
             Task { @MainActor in self?.receive(d) }
         }
         err.fileHandleForReading.readabilityHandler = { h in
             let d = h.availableData
-            guard !d.isEmpty, let t = String(data: d, encoding: .utf8) else { return }
+            guard !d.isEmpty else { h.readabilityHandler = nil; return }
+            guard let t = String(data: d, encoding: .utf8) else { return }
             Task { @MainActor in Diag.log("Trình đọc nhạc báo lỗi: \(t.trimmingCharacters(in: .whitespacesAndNewlines))") }
         }
         p.terminationHandler = { [weak self] pr in
@@ -2200,6 +2203,7 @@ final class MediaWatcher {
             try p.run()
             proc = p
             input = inp.fileHandleForWriting
+            startedAt = Date()
             Diag.log("Đã chạy trình đọc nhạc")
         } catch {
             statusText = "Không chạy được trình đọc nhạc"
@@ -2220,7 +2224,11 @@ final class MediaWatcher {
 
     private func died(_ code: Int32) {
         proc = nil
+        try? input?.close()
         input = nil
+        // Chạy ổn hơn 2 phút rồi mới dừng thì coi như lần dừng mới, không cộng dồn vào số lần lỗi.
+        if let t = startedAt, Date().timeIntervalSince(t) > 120 { restarts = 0 }
+        startedAt = nil
         Diag.log("Trình đọc nhạc dừng (mã \(code))")
         guard restarts < 5 else {
             statusText = "Trình đọc nhạc dừng nhiều lần, có thể macOS đã chặn cách này"
@@ -2249,7 +2257,7 @@ final class MediaWatcher {
             Diag.log("Trình đọc nhạc: \(e)")
             return
         }
-        if o["ready"] != nil { restarts = 0; return }
+        if o["ready"] != nil { return }
         if let cmd = o["command"] as? String {
             Diag.log("Lệnh \(cmd): \((o["ok"] as? Bool) == true ? "ok" : "không được")")
             return
@@ -2456,7 +2464,10 @@ final class AppMusicBridge {
             }
         } else if bundle == "com.spotify.client" {
             Self.osa(["tell application \"Spotify\" to get artwork url of current track"]) { out, _ in
-                guard let out, let url = URL(string: out), url.scheme == "https" else { return }
+                // Chỉ tải ảnh bìa từ máy chủ ảnh của Spotify (đúng như README ghi).
+                guard let out, let url = URL(string: out), url.scheme == "https",
+                      let host = url.host?.lowercased(),
+                      host == "scdn.co" || host.hasSuffix(".scdn.co") || host.hasSuffix(".spotifycdn.com") else { return }
                 URLSession.shared.dataTask(with: url) { data, _, _ in
                     apply(data.flatMap { NSImage(data: $0) })
                 }.resume()
@@ -2715,6 +2726,8 @@ final class NotchController {
     }
 
     private func mouseUp() {
+        // Phòng khi thao tác kéo khung bị huỷ mà SwiftUI không báo kết thúc.
+        model.marqueeActive = false
         if model.draggingOut {
             model.draggingOut = false
             if !expandedRect.contains(NSEvent.mouseLocation) { scheduleCollapse(force: false) }
@@ -2762,6 +2775,7 @@ final class NotchController {
         model.expanded = false
         model.dropTargeted = false
         model.shelfSelection = []
+        model.shelfAnchor = nil
         model.marqueeActive = false
         panel.ignoresMouseEvents = true
         if panel.isKeyWindow {
@@ -2993,8 +3007,6 @@ final class Panel {
     private let content: () -> AnyView
 
     init(_ content: @escaping () -> AnyView) { self.content = content }
-
-    func close() { window?.close() }
 
     /// attention = app tự mở (có bản mới, vừa cập nhật, mẹo lần đầu): từ macOS 14, app trên thanh menu
     /// không được tự giành quyền lên trước nên cửa sổ dễ bị kẹt sau app đang dùng. Lúc đó cho cửa sổ nổi
@@ -3630,10 +3642,16 @@ final class Updater: ObservableObject {
 
     private var retryWork: DispatchWorkItem?
     private var retryCount = 0
+    private var retryVersion = ""
+    /// Bản mới tìm thấy gần nhất: lần hỏi lại bị lỗi mạng thì vẫn giữ để người dùng cài được.
+    private var lastFound: Release?
 
-    /// Hỏi lại sau 3 phút khi bản mới chưa có đủ gói cài (tối đa 6 lần, khỏi tốn lượt hỏi GitHub).
-    private func scheduleRetry() {
-        guard retryCount < 6 else { return }
+    /// Hỏi lại sau 3 phút khi bản mới chưa có đủ gói cài (tối đa 6 lần cho mỗi bản, khỏi tốn lượt hỏi GitHub).
+    /// Trả về false khi đã hết lượt chờ.
+    @discardableResult
+    private func scheduleRetry(for version: String) -> Bool {
+        if version != retryVersion { retryVersion = version; retryCount = 0 }
+        guard retryCount < 6 else { return false }
         retryCount += 1
         retryWork?.cancel()
         let w = DispatchWorkItem { [weak self] in
@@ -3641,6 +3659,7 @@ final class Updater: ObservableObject {
         }
         retryWork = w
         DispatchQueue.main.asyncAfter(deadline: .now() + 180, execute: w)
+        return true
     }
 
     func check(background: Bool = false) {
@@ -3660,12 +3679,13 @@ final class Updater: ObservableObject {
             if Updater.isNewer(rel.version, than: AppInfo.version) {
                 // Vừa bấm phát hành thì GitHub đã coi là bản mới nhất nhưng gói cài phải ~5 phút sau mới gắn vào.
                 // Lúc đó chưa báo (kiểm tra nền) và hẹn hỏi lại, để không kẹt ở nút tải thủ công.
+                // Hết lượt chờ mà vẫn thiếu gói (bản phát hành lỗi) thì vẫn báo, người dùng tải thủ công.
                 if !rel.canAutoInstall {
-                    scheduleRetry()
-                    if background { return }
+                    if scheduleRetry(for: rel.version), background { return }
                 } else {
                     Prefs.lastUpdateCheck = Date()
                 }
+                lastFound = rel
                 if background, let a = available, a.version == rel.version, a.canAutoInstall == rel.canAutoInstall { return }
                 state = .available(rel)
                 onChange?()
@@ -3673,9 +3693,13 @@ final class Updater: ObservableObject {
                 return
             }
             Prefs.lastUpdateCheck = Date()
+            lastFound = nil
             if !background { state = .upToDate }
         } catch {
-            if !background { state = .failed }
+            if !background {
+                // Đã biết có bản mới mà lần hỏi lại lỗi (mạng, giới hạn GitHub) thì giữ bản đó, không xoá dấu báo.
+                if let r = lastFound { state = .available(r) } else { state = .failed }
+            }
         }
         onChange?()
     }
@@ -3930,6 +3954,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     lazy var updatePanel = Panel { [unowned self] in AnyView(UpdateView(updater: self.updater)) }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Ghi lệnh vào trình đọc nhạc đúng lúc nó vừa thoát sẽ gây SIGPIPE và làm sập app: bỏ qua tín hiệu này.
+        signal(SIGPIPE, SIG_IGN)
         AppDelegate.shared = self
         controller = NotchController(model: model)
         ClipboardWatcher.shared = ClipboardWatcher(model: model)

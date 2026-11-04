@@ -55,8 +55,10 @@ make_dmg() {
   DMG="build/RinNotch-${VERSION}.dmg"
   echo "→ Đang tạo file cài .dmg…"
   python3 -m venv build/.venv
-  build/.venv/bin/pip install --quiet --disable-pip-version-check dmgbuild
-  build/.venv/bin/dmgbuild -s dmg_settings.py -D app="${APP}" "RinNotch" "${DMG}"
+  # Gói ngoài chạy không kèm khoá bí mật trong biến môi trường, và cố định phiên bản.
+  env -u UPDATE_KEY -u P12_PASSWORD build/.venv/bin/pip install --quiet --disable-pip-version-check \
+    "dmgbuild==1.6.7" "ds-store==1.3.3" "mac-alias==2.2.3"
+  env -u UPDATE_KEY -u P12_PASSWORD build/.venv/bin/dmgbuild -s dmg_settings.py -D app="${APP}" "RinNotch" "${DMG}"
   echo "✓ File cài: ${DMG}"
 }
 
@@ -66,7 +68,7 @@ make_update_zip() {
   ditto -c -k --keepParent "${APP}" "${ZIP}"
   echo "✓ Gói cập nhật: ${ZIP}"
   if [[ -n "${UPDATE_KEY:-}" ]]; then
-    build/.venv/bin/pip install --quiet --disable-pip-version-check cryptography
+    env -u UPDATE_KEY -u P12_PASSWORD build/.venv/bin/pip install --quiet --disable-pip-version-check "cryptography==46.0.7"
     ZIP="${ZIP}" build/.venv/bin/python - <<'PY'
 import base64, os
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey

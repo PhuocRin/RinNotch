@@ -44,6 +44,8 @@ static void emit(void) {
         NSMutableDictionary *o = [NSMutableDictionary dictionary];
         if (d) {
             NSString *title = clean(d[@"kMRMediaRemoteNowPlayingInfoTitle"]) ?: @"";
+            // Không còn bài nào thì quên ảnh bìa đã gửi, để bài phát lại sau đó vẫn nhận lại ảnh bìa.
+            if (title.length == 0) gLastArtKey = nil;
             NSString *artist = clean(d[@"kMRMediaRemoteNowPlayingInfoArtist"]) ?: @"";
             o[@"title"] = title;
             o[@"artist"] = artist;
@@ -61,6 +63,8 @@ static void emit(void) {
                 o[@"artwork"] = [art base64EncodedStringWithOptions:0];
                 gLastArtKey = key;
             }
+        } else {
+            gLastArtKey = nil;
         }
         void (^finish)(void) = ^{
             if (gGetPID) {
