@@ -744,6 +744,20 @@ struct ExpandedView: View {
                         }
                     }
                 }
+                // Trái tim nhỏ: bấm vào mới mở cửa sổ Ủng hộ tác giả, không tự hiện gì.
+                Button {
+                    AppDelegate.shared?.controller.collapse()
+                    AppDelegate.shared?.showSupport()
+                } label: {
+                    Image(systemName: "heart.fill")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Color.pink.opacity(0.85))
+                        .frame(width: 30, height: 30)
+                        .background(Circle().fill(Color.white.opacity(0.06)))
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .help("Ủng hộ tác giả")
             }
             Group {
                 switch m.tab {
