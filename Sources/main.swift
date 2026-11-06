@@ -436,25 +436,48 @@ struct CompactView: View {
                 Text("Bấm giờ").font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.6))
             }
         } else if m.musicCompact {
-            MusicBars()
+            MusicBars().frame(width: 18, height: 18)
         }
     }
 }
 
-struct MusicBars: View {
-    @State private var phase = false
-    var body: some View {
-        HStack(alignment: .center, spacing: 2) {
-            ForEach(0..<4, id: \.self) { i in
-                Capsule()
-                    .fill(Color.white.opacity(0.9))
-                    .frame(width: 3, height: phase ? [14, 8, 16, 10][i] : [6, 14, 7, 13][i])
-                    .animation(.easeInOut(duration: [0.45, 0.38, 0.5, 0.42][i]).repeatForever(autoreverses: true), value: phase)
-            }
+/// Bốn thanh nhạc nhảy. Vẽ bằng Core Animation: hoạt ảnh chạy trong tiến trình vẽ của macOS,
+/// RinNotch không phải tính lại từng khung hình suốt lúc nghe nhạc (bản SwiftUI cũ tốn CPU liên tục).
+struct MusicBars: NSViewRepresentable {
+    func makeNSView(context: Context) -> MusicBarsView { MusicBarsView() }
+    func updateNSView(_ nsView: MusicBarsView, context: Context) {}
+}
+
+final class MusicBarsView: NSView {
+    private static let low: [CGFloat] = [6, 14, 7, 13]
+    private static let high: [CGFloat] = [14, 8, 16, 10]
+    private static let durations: [Double] = [0.45, 0.38, 0.5, 0.42]
+
+    init() {
+        super.init(frame: NSRect(x: 0, y: 0, width: 18, height: 18))
+        wantsLayer = true
+        for i in 0..<4 {
+            let bar = CALayer()
+            bar.backgroundColor = NSColor.white.withAlphaComponent(0.9).cgColor
+            bar.cornerRadius = 1.5
+            bar.bounds = CGRect(x: 0, y: 0, width: 3, height: Self.low[i])
+            bar.position = CGPoint(x: 1.5 + CGFloat(i) * 5, y: 9)
+            let a = CABasicAnimation(keyPath: "bounds.size.height")
+            a.fromValue = Self.low[i]
+            a.toValue = Self.high[i]
+            a.duration = Self.durations[i]
+            a.autoreverses = true
+            a.repeatCount = .infinity
+            a.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            a.isRemovedOnCompletion = false
+            bar.add(a, forKey: "bounce")
+            layer?.addSublayer(bar)
         }
-        .frame(height: 18)
-        .onAppear { phase = true }
     }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var intrinsicContentSize: NSSize { NSSize(width: 18, height: 18) }
 }
 
 struct ArtworkView: View {
@@ -945,13 +968,25 @@ struct TimerView: View {
 final class TimerEngine {
     static var shared: TimerEngine?
     private let m: NotchModel
-    private var tick: Timer?
+    /// Chỉ có khi đang đếm ngược: hẹn đúng lúc hết giờ, không chạy thường trực.
+    private var doneTimer: Timer?
 
     init(model: NotchModel) {
         m = model
-        tick = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+    }
+
+    private func reschedule() {
+        doneTimer?.invalidate()
+        doneTimer = nil
+        let t = m.timer
+        guard t.running, t.mode == .countdown else { return }
+        let left = max(t.countdownTotal - t.elapsed(at: Date()), 0)
+        let timer = Timer(timeInterval: left + 0.05, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated { self?.check() }
         }
+        timer.tolerance = 0.1
+        RunLoop.main.add(timer, forMode: .common)
+        doneTimer = timer
     }
 
     func toggle() {
@@ -966,6 +1001,7 @@ final class TimerEngine {
             t.running = true
         }
         m.timer = t
+        reschedule()
     }
 
     func reset() {
@@ -974,6 +1010,7 @@ final class TimerEngine {
         t.startedAt = nil
         t.accumulated = 0
         m.timer = t
+        reschedule()
     }
 
     func setMode(_ mode: TimerMode) {
@@ -983,6 +1020,7 @@ final class TimerEngine {
         t.accumulated = 0
         t.startedAt = nil
         m.timer = t
+        reschedule()
     }
 
     func setCountdown(minutes: Int) {
@@ -991,11 +1029,13 @@ final class TimerEngine {
         t.countdownTotal = TimeInterval(minutes * 60)
         t.accumulated = 0
         m.timer = t
+        reschedule()
     }
 
     private func check() {
         let t = m.timer
-        guard t.running, t.mode == .countdown, t.elapsed(at: Date()) >= t.countdownTotal else { return }
+        guard t.running, t.mode == .countdown else { return }
+        guard t.elapsed(at: Date()) >= t.countdownTotal else { reschedule(); return }
         var done = t
         done.running = false
         done.startedAt = nil
@@ -1745,9 +1785,11 @@ final class ClipboardWatcher {
 
     init(model: NotchModel) {
         m = model
+        // Bộ nhớ tạm không có thông báo khi đổi, phải hỏi số đếm (rất nhẹ). Cho phép lệch để macOS gom việc.
         timer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.poll() }
         }
+        timer?.tolerance = 0.2
     }
 
     func ignore(_ count: Int) {
@@ -1825,6 +1867,28 @@ enum CA {
     }
 
     /// Các tiến trình (không phải RinNotch) đang dùng micro. Cần macOS 14+.
+    /// Các thiết bị có đường thu (micro trong máy, AirPods, micro rời…).
+    static func inputDevices() -> [AudioObjectID] {
+        var a = addr(kAudioHardwarePropertyDevices)
+        var size: UInt32 = 0
+        let sys = AudioObjectID(kAudioObjectSystemObject)
+        guard AudioObjectGetPropertyDataSize(sys, &a, 0, nil, &size) == noErr, size > 0 else { return [] }
+        var ids = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
+        guard AudioObjectGetPropertyData(sys, &a, 0, nil, &size, &ids) == noErr else { return [] }
+        return ids.filter { id in
+            var s = addr(kAudioDevicePropertyStreams, kAudioObjectPropertyScopeInput)
+            var n: UInt32 = 0
+            return AudioObjectGetPropertyDataSize(id, &s, 0, nil, &n) == noErr && n > 0
+        }
+    }
+
+    static func isRunningSomewhere(_ id: AudioObjectID) -> Bool {
+        var a = addr(kAudioDevicePropertyDeviceIsRunningSomewhere)
+        var v: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        return AudioObjectGetPropertyData(id, &a, 0, nil, &size, &v) == noErr && v != 0
+    }
+
     static func micUsers() -> [pid_t] {
         var a = addr(kAudioHardwarePropertyProcessObjectList)
         var size: UInt32 = 0
@@ -1984,11 +2048,58 @@ final class RecordingWatcher {
     private var peakSinceLog: CGFloat = 0
     private var lastLog = Date.distantPast
 
+    /// macOS báo khi có micro bắt đầu / thôi được dùng. Micro rảnh thì chỉ hỏi lại mỗi 5 giây (phòng khi không nhận được báo),
+    /// thay vì hỏi danh sách tiến trình âm thanh mỗi 0,5 giây suốt ngày.
+    private var micActive = false
+    private var inputs: [AudioObjectID] = []
+    private var interval: TimeInterval = 0
+    private var tickCount = 0
+    private lazy var runningListener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+        MainActor.assumeIsolated { self?.inputsChanged() }
+    }
+    private lazy var devicesListener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+        MainActor.assumeIsolated { self?.watchInputs() }
+    }
+
     init(model: NotchModel) {
         m = model
-        timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.check() }
+        var a = CA.addr(kAudioHardwarePropertyDevices)
+        AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &a, DispatchQueue.main, devicesListener)
+        watchInputs()
+        tick()
+    }
+
+    private func watchInputs() {
+        var a = CA.addr(kAudioDevicePropertyDeviceIsRunningSomewhere)
+        for d in inputs { AudioObjectRemovePropertyListenerBlock(d, &a, DispatchQueue.main, runningListener) }
+        inputs = CA.inputDevices()
+        for d in inputs { AudioObjectAddPropertyListenerBlock(d, &a, DispatchQueue.main, runningListener) }
+        inputsChanged()
+    }
+
+    private func inputsChanged() {
+        let active = inputs.contains { CA.isRunningSomewhere($0) }
+        guard active != micActive else { return }
+        micActive = active
+        tick()
+    }
+
+    private func tick() {
+        tickCount += 1
+        let recording = session.map { !$0.paused } ?? false
+        // Micro rảnh và đang có phiên tạm dừng: không cần hỏi mỗi giây, chỉ cần đếm giờ ẩn / hết phiên.
+        let query = micActive || recording || session == nil || tickCount % 5 == 0
+        check(query: query)
+        let next: TimeInterval = micActive ? 0.5 : (session != nil ? 1 : 5)
+        guard next != interval || timer == nil else { return }
+        interval = next
+        timer?.invalidate()
+        let t = Timer(timeInterval: next, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.tick() }
         }
+        t.tolerance = next * 0.2
+        RunLoop.main.add(t, forMode: .common)
+        timer = t
     }
 
     /// Phiên ghi âm giữ lại tối đa 15 phút sau khi tạm dừng để ghi tiếp thì cộng dồn thời gian.
@@ -1996,9 +2107,9 @@ final class RecordingWatcher {
     private let pausedVisible: TimeInterval = 8
     private let sessionKeep: TimeInterval = 15 * 60
 
-    private func check() {
+    private func check(query: Bool) {
         let now = Date()
-        let apps = CA.micUsers()
+        let apps = (query ? CA.micUsers() : [])
             .compactMap { NSRunningApplication(processIdentifier: $0) }
             .filter { $0.activationPolicy == .regular }
         if let app = apps.first {
@@ -2306,8 +2417,10 @@ final class MediaHub {
         if let old = system, let np, old.title != np.title || old.artist != np.artist { systemArt = nil }
         if np == nil { systemArt = nil }
         if artworkChanged, let artwork { systemArt = artwork }
+        let wasPlaying = systemIsPlaying
         system = np
         recompute()
+        if wasPlaying != systemIsPlaying { AppMusicBridge.shared?.pollSoon() }
     }
 
     func setApp(_ np: NowPlaying?, bundle: String?, artwork: NSImage?) {
@@ -2360,10 +2473,49 @@ final class AppMusicBridge {
 
     static let apps: [(bundle: String, name: String)] = [("com.apple.Music", "Music"), ("com.spotify.client", "Spotify")]
 
+    private var soonWork: DispatchWorkItem?
+
+    /// Music và Spotify tự báo (DistributedNotificationCenter) khi đổi bài, phát, dừng; mở / tắt app thì NSWorkspace báo.
+    /// Có báo mới hỏi bằng AppleScript. Hỏi định kỳ chỉ để dự phòng: 5 giây khi đang hiện bài của app, 20 giây lúc rảnh
+    /// (bản cũ chạy osascript mỗi 1,5 giây suốt lúc Music/Spotify mở mà đang dừng).
     init() {
-        timer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
+        let dnc = DistributedNotificationCenter.default()
+        for name in ["com.apple.Music.playerInfo", "com.spotify.client.PlaybackStateChanged"] {
+            dnc.addObserver(forName: Notification.Name(name), object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.pollSoon() }
+            }
+        }
+        let ws = NSWorkspace.shared.notificationCenter
+        for n in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
+            ws.addObserver(forName: n, object: nil, queue: .main) { [weak self] note in
+                let bundle = (note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.bundleIdentifier
+                MainActor.assumeIsolated {
+                    guard let bundle, Self.apps.contains(where: { $0.bundle == bundle }) else { return }
+                    self?.pollSoon()
+                }
+            }
+        }
+        pollSoon()
+    }
+
+    func pollSoon() {
+        soonWork?.cancel()
+        let w = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated { self?.poll() }
         }
+        soonWork = w
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: w)
+    }
+
+    private func scheduleFallback() {
+        timer?.invalidate()
+        let next: TimeInterval = MediaHub.shared?.showingApp == true ? 5 : 20
+        let t = Timer(timeInterval: next, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.poll() }
+        }
+        t.tolerance = next * 0.2
+        RunLoop.main.add(t, forMode: .common)
+        timer = t
     }
 
     private func running(_ bundle: String) -> NSRunningApplication? {
@@ -2371,6 +2523,7 @@ final class AppMusicBridge {
     }
 
     private func poll() {
+        scheduleFallback()
         guard !busy, let hub = MediaHub.shared else { return }
         // Chỉ cần hỏi khi app macOS chọn đang dừng, hoặc đang hiện Music/Spotify.
         guard !hub.systemIsPlaying || hub.showingApp else {
@@ -4004,6 +4157,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updateTimer = Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.updater.checkIfDue() }
         }
+        updateTimer?.tolerance = 600
     }
 
     // MARK: Thanh menu
