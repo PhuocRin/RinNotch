@@ -117,6 +117,32 @@ struct FileCardThumb: View {
     }
 }
 
+/// Đổi tên file thật trên ổ (chuột phải trên thẻ → Đổi tên file…).
+@MainActor
+enum ShelfRename {
+    static func run(_ u: URL, m: NotchModel) {
+        guard let name = Prompt.text(title: "Đổi tên file", message: "File gốc trong Finder cũng được đổi tên.",
+                                     value: u.lastPathComponent, ok: "Đổi tên", selectBaseName: true) else { return }
+        let clean = name.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "/", with: "-")
+        guard !clean.isEmpty, clean != u.lastPathComponent else { return }
+        let dest = u.deletingLastPathComponent().appendingPathComponent(clean)
+        if FileManager.default.fileExists(atPath: dest.path) {
+            m.flashShelfStatus("Đã có file tên \"\(clean)\" trong thư mục đó")
+            return
+        }
+        do {
+            try FileManager.default.moveItem(at: u, to: dest)
+            if let i = m.shelf.firstIndex(of: u) { m.shelf[i] = dest }
+            if m.shelfSelection.remove(u) != nil { m.shelfSelection.insert(dest) }
+            if m.shelfAnchor == u { m.shelfAnchor = dest }
+            m.saveShelfNow()
+            m.flashShelfStatus("Đã đổi tên thành \(clean)")
+        } catch {
+            m.flashShelfStatus("Không đổi tên được: \(error.localizedDescription)")
+        }
+    }
+}
+
 enum FileInfo {
     static func size(_ u: URL) -> String {
         var isDir: ObjCBool = false
@@ -129,52 +155,171 @@ enum FileInfo {
 
 // MARK: - Bảng lớn
 
-enum LibraryTab: String { case clipboard, shelf }
+enum LibraryTab: String, CaseIterable {
+    case clipboard, shelf, notes, translate
+    var title: String {
+        switch self {
+        case .clipboard: return "Bộ nhớ tạm"
+        case .shelf: return "Kệ file"
+        case .notes: return "Ghi chú"
+        case .translate: return "Dịch"
+        }
+    }
+    var symbol: String {
+        switch self {
+        case .clipboard: return Tab.clipboard.symbol
+        case .shelf: return Tab.shelf.symbol
+        case .notes: return Tab.notes.symbol
+        case .translate: return Tab.translate.symbol
+        }
+    }
+}
+
+/// Nền kính: Liquid Glass của hệ thống trên macOS 26 trở lên, kính mờ ở bản cũ hơn.
+struct GlassBackdrop: View {
+    var radius: CGFloat = 28
+
+    @ViewBuilder var body: some View {
+        let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+        #if compiler(>=6.2)
+        if #available(macOS 26.0, *) {
+            Color.clear.glassEffect(.regular, in: shape)
+        } else {
+            VisualBlur().clipShape(shape)
+        }
+        #else
+        VisualBlur().clipShape(shape)
+        #endif
+    }
+}
+
+struct VisualBlur: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let v = NSVisualEffectView()
+        v.material = .hudWindow
+        v.blendingMode = .behindWindow
+        v.state = .active
+        return v
+    }
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
+}
+
+/// Viên kính nhỏ (nút, ô tìm) trên bảng lớn.
+struct GlassCapsule: ViewModifier {
+    var tint: Color? = nil
+    @ViewBuilder func body(content: Content) -> some View {
+        #if compiler(>=6.2)
+        if #available(macOS 26.0, *) {
+            if let tint {
+                content.glassEffect(.regular.tint(tint).interactive(), in: Capsule())
+            } else {
+                content.glassEffect(.regular.interactive(), in: Capsule())
+            }
+        } else {
+            content.background(Capsule().fill(tint ?? Color.white.opacity(0.1)))
+        }
+        #else
+        content.background(Capsule().fill(tint ?? Color.white.opacity(0.1)))
+        #endif
+    }
+}
 
 struct LibraryView: View {
     @ObservedObject var m: NotchModel
     @State private var shelfSearch = ""
 
+    @State private var appeared = false
+
     var body: some View {
         VStack(spacing: 12) {
-            HStack(spacing: 10) {
-                Picker("", selection: $m.libraryTab) {
-                    Text("Bộ nhớ tạm \(m.clips.count)").tag(LibraryTab.clipboard)
-                    Text("Kệ file \(m.shelf.count)").tag(LibraryTab.shelf)
+            HStack(spacing: 8) {
+                ForEach(LibraryTab.allCases, id: \.self) { t in
+                    Button {
+                        withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) { m.libraryTab = t }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: t.symbol).font(.system(size: 13, weight: .semibold))
+                            Text(t.title).font(.system(size: 13, weight: .semibold))
+                            if t == .clipboard { badge(m.clips.count) }
+                            if t == .shelf { badge(m.shelf.count) }
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .foregroundStyle(.white.opacity(m.libraryTab == t ? 1 : 0.7))
+                        .modifier(GlassCapsule(tint: m.libraryTab == t ? Color.accentColor.opacity(0.55) : nil))
+                        .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 280)
-                HStack(spacing: 6) {
-                    Image(systemName: "magnifyingglass").foregroundStyle(.white.opacity(0.5))
-                    if m.libraryTab == .clipboard {
-                        TextField("", text: $m.clipSearch, prompt: Text("Tìm, không cần dấu · @link @image @color @code @file @tên-app").foregroundColor(.white.opacity(0.35)))
-                            .textFieldStyle(.plain)
-                    } else {
-                        TextField("", text: $shelfSearch, prompt: Text("Tìm tên file").foregroundColor(.white.opacity(0.35)))
-                            .textFieldStyle(.plain)
+                Spacer(minLength: 8)
+                if m.libraryTab == .clipboard || m.libraryTab == .shelf {
+                    HStack(spacing: 6) {
+                        Image(systemName: "magnifyingglass").foregroundStyle(.white.opacity(0.6))
+                        if m.libraryTab == .clipboard {
+                            TextField("", text: $m.clipSearch, prompt: Text("Tìm, không cần dấu · @link @code @tên-app").foregroundColor(.white.opacity(0.4)))
+                                .textFieldStyle(.plain)
+                        } else {
+                            TextField("", text: $shelfSearch, prompt: Text("Tìm tên file").foregroundColor(.white.opacity(0.4)))
+                                .textFieldStyle(.plain)
+                        }
+                    }
+                    .font(.system(size: 13))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: 360)
+                    .modifier(GlassCapsule())
+                }
+                Button {
+                    LibraryWindow.shared.close()
+                } label: {
+                    Image(systemName: "xmark").font(.system(size: 12, weight: .bold))
+                        .frame(width: 32, height: 32)
+                        .modifier(GlassCapsule())
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .help("Đóng (Esc)")
+            }
+            if m.libraryTab == .clipboard || m.libraryTab == .shelf {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        if m.libraryTab == .clipboard { ClipChips(m: m, large: true) } else { ShelfChips(m: m) }
                     }
                 }
-                .font(.system(size: 13))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-                .background(Capsule().fill(Color.white.opacity(0.09)))
             }
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    if m.libraryTab == .clipboard { ClipChips(m: m, large: true) } else { ShelfChips(m: m) }
+            Group {
+                switch m.libraryTab {
+                case .clipboard: clipGrid
+                case .shelf: shelfGrid
+                case .notes: BigNotesView(m: m)
+                case .translate: TranslateView(m: m).padding(.top, 4)
                 }
             }
-            if m.libraryTab == .clipboard { clipGrid } else { shelfGrid }
-            bottomBar
+            .transition(.opacity.combined(with: .scale(scale: 0.98)))
+            if m.libraryTab == .clipboard || m.libraryTab == .shelf { bottomBar }
         }
-        .padding(.horizontal, 18)
-        .padding(.top, 36)
-        .padding(.bottom, 14)
+        .padding(20)
         .frame(minWidth: 640, minHeight: 420)
-        .background(Color(white: 0.07))
+        .background(GlassBackdrop(radius: 28))
         .foregroundStyle(.white)
         .environment(\.colorScheme, .dark)
+        // Bung ra từ phía trên (như từ tai thỏ) thay vì hiện cái rụp.
+        .scaleEffect(appeared ? 1 : 0.86, anchor: .top)
+        .opacity(appeared ? 1 : 0)
+        .onAppear {
+            withAnimation(.spring(response: 0.42, dampingFraction: 0.78)) { appeared = true }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .rinLibraryWillClose)) { _ in
+            withAnimation(.easeIn(duration: 0.16)) { appeared = false }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .rinLibraryWillOpen)) { _ in
+            appeared = false
+            withAnimation(.spring(response: 0.42, dampingFraction: 0.78)) { appeared = true }
+        }
+    }
+
+    private func badge(_ n: Int) -> some View {
+        Text("\(n)").font(.system(size: 11, weight: .semibold)).monospacedDigit().foregroundStyle(.white.opacity(0.6))
     }
 
     private var clipGrid: some View {
@@ -279,36 +424,145 @@ struct LibraryView: View {
     }
 }
 
-@MainActor
-final class LibraryWindow: NSObject, NSWindowDelegate {
-    static let shared = LibraryWindow()
-    private var window: NSWindow?
+extension Notification.Name {
+    static let rinLibraryWillClose = Notification.Name("RinNotchLibraryWillClose")
+    static let rinLibraryWillOpen = Notification.Name("RinNotchLibraryWillOpen")
+}
 
-    var isFrontmost: Bool { window?.isVisible == true && window?.isKeyWindow == true }
+/// Bảng lớn nổi trên màn hình: không viền, nền kính, không giành focus của app đang dùng (giống RinKeys).
+final class LibraryPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+    override func cancelOperation(_ sender: Any?) {
+        MainActor.assumeIsolated { LibraryWindow.shared.close() }
+    }
+}
+
+@MainActor
+final class LibraryWindow: NSObject {
+    static let shared = LibraryWindow()
+    private var panel: LibraryPanel?
+    private var closing = false
+
+    var isFrontmost: Bool { panel?.isVisible == true && !closing }
 
     func show(_ m: NotchModel) {
-        if window == nil {
-            let w = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 980, height: 640),
-                             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
-                             backing: .buffered, defer: false)
-            w.titlebarAppearsTransparent = true
-            w.titleVisibility = .hidden
-            w.title = "RinNotch"
-            w.isReleasedWhenClosed = false
-            w.minSize = NSSize(width: 640, height: 420)
-            w.backgroundColor = NSColor(white: 0.07, alpha: 1)
-            w.appearance = NSAppearance(named: .darkAqua)
-            w.collectionBehavior.insert(.moveToActiveSpace)
-            w.contentView = NSHostingView(rootView: LibraryView(m: m))
-            w.setFrameAutosaveName("RinNotchLibrary")
-            if !w.setFrameUsingName("RinNotchLibrary") { w.center() }
-            w.delegate = self
-            window = w
+        if panel == nil {
+            let p = LibraryPanel(contentRect: CGRect(x: 0, y: 0, width: 980, height: 640),
+                                 styleMask: [.borderless, .nonactivatingPanel, .resizable],
+                                 backing: .buffered, defer: false)
+            p.isOpaque = false
+            p.backgroundColor = .clear
+            p.hasShadow = true
+            p.level = .floating
+            p.isMovableByWindowBackground = true
+            p.hidesOnDeactivate = false
+            p.isReleasedWhenClosed = false
+            p.minSize = NSSize(width: 640, height: 420)
+            p.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
+            p.appearance = NSAppearance(named: .darkAqua)
+            let host = NSHostingView(rootView: LibraryView(m: m))
+            host.wantsLayer = true
+            host.layer?.backgroundColor = NSColor.clear.cgColor
+            p.contentView = host
+            p.setFrameAutosaveName("RinNotchBigBoard")
+            if !p.setFrameUsingName("RinNotchBigBoard") { place(p) }
+            panel = p
+        } else if panel?.isVisible == false {
+            NotificationCenter.default.post(name: .rinLibraryWillOpen, object: nil)
         }
-        NSApp.activate()
-        window?.makeKeyAndOrderFront(nil)
-        window?.orderFrontRegardless()
+        closing = false
+        panel?.orderFrontRegardless()
+        panel?.makeKey()
     }
 
-    func close() { window?.performClose(nil) }
+    /// Lần đầu: giữa màn hình đang có chuột, rộng khoảng 70% × 75%.
+    private func place(_ p: NSPanel) {
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main
+        guard let f = screen?.visibleFrame else { return }
+        let w = min(max(f.width * 0.7, 760), 1280), h = min(max(f.height * 0.75, 480), 860)
+        p.setFrame(CGRect(x: f.midX - w / 2, y: f.midY - h / 2, width: w, height: h), display: false)
+    }
+
+    func close() {
+        guard let p = panel, p.isVisible, !closing else { return }
+        closing = true
+        NotificationCenter.default.post(name: .rinLibraryWillClose, object: nil)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.17) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.closing else { return }
+                p.orderOut(nil)
+                self.closing = false
+            }
+        }
+    }
+}
+
+/// Ghi chú cỡ lớn trong bảng lớn: ô gõ to + danh sách ghi chú gần đây.
+struct BigNotesView: View {
+    @ObservedObject var m: NotchModel
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 14) {
+            VStack(alignment: .leading, spacing: 10) {
+                ZStack(alignment: .topLeading) {
+                    TextEditor(text: $m.noteDraft)
+                        .font(.system(size: 15))
+                        .scrollContentBackground(.hidden)
+                        .padding(10)
+                        .onKeyPress(.return, phases: .down) { press in
+                            guard press.modifiers.contains(.command) else { return .ignored }
+                            NotesSaver.save(m)
+                            return .handled
+                        }
+                    if m.noteDraft.isEmpty {
+                        Text("Gõ ý tưởng… Enter để xuống dòng, ⌘ Enter để lưu vào Notes")
+                            .font(.system(size: 15)).foregroundStyle(.white.opacity(0.35))
+                            .padding(.horizontal, 15).padding(.vertical, 10)
+                            .allowsHitTesting(false)
+                    }
+                }
+                .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.black.opacity(0.25)))
+                HStack {
+                    Text(m.noteStatus ?? "Lưu vào app Ghi chú, thư mục RinNotch")
+                        .font(.system(size: 12)).foregroundStyle(.white.opacity(0.6)).lineLimit(2)
+                    Spacer()
+                    Button("Lưu vào Notes") { NotesSaver.save(m) }
+                        .buttonStyle(PillButton(prominent: true))
+                        .disabled(m.noteDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Gần đây").font(.system(size: 12, weight: .semibold)).foregroundStyle(.white.opacity(0.55))
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(m.notes) { n in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(n.text).font(.system(size: 12)).lineLimit(4)
+                                HStack(spacing: 6) {
+                                    Image(systemName: n.savedToNotes ? "checkmark.circle.fill" : "circle.dashed")
+                                        .foregroundStyle(n.savedToNotes ? Color.green : Color.white.opacity(0.4))
+                                    Text(n.date, style: .relative)
+                                    Spacer()
+                                    Button("Chép") { ClipboardWatcher.shared?.copyText(n.text, source: "RinNotch · Ghi chú") }
+                                        .buttonStyle(.plain).foregroundStyle(Color.accentColor)
+                                }
+                                .font(.system(size: 10.5))
+                                .foregroundStyle(.white.opacity(0.5))
+                            }
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.white.opacity(0.07)))
+                        }
+                        if m.notes.isEmpty {
+                            Text("Chưa có ghi chú nào").font(.system(size: 12)).foregroundStyle(.white.opacity(0.45))
+                        }
+                    }
+                }
+            }
+            .frame(width: 280)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
 }

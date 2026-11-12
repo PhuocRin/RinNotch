@@ -48,6 +48,8 @@ struct ClipItem: Identifiable {
     var sourceID: String?
     var sourceName: String?
     var linkTitle: String?
+    /// Tên người dùng tự đặt (chuột phải → Đặt tên), tìm được bằng tên này.
+    var name: String?
     let category: ClipCategory
 
     init(kind: ClipKind, date: Date = Date(), sourceID: String? = nil, sourceName: String? = nil, id: UUID = UUID()) {
@@ -99,7 +101,7 @@ struct ClipItem: Identifiable {
     func matches(_ query: String) -> Bool {
         let words = query.split(whereSeparator: { $0 == " " }).map { ClipParse.fold(String($0)) }
         guard !words.isEmpty else { return true }
-        let hay = ClipParse.fold([preview, text ?? "", linkTitle ?? "", sourceName ?? ""].joined(separator: " "))
+        let hay = ClipParse.fold([name ?? "", preview, text ?? "", linkTitle ?? "", sourceName ?? ""].joined(separator: " "))
         let app = ClipParse.fold(sourceName ?? "")
         for w in words {
             if w.hasPrefix("@") {
@@ -337,6 +339,7 @@ struct StoredClip: Codable {
     var sourceID: String?
     var sourceName: String?
     var linkTitle: String?
+    var name: String?
     var type: String
     var text: String?
     var paths: [String]?
@@ -366,7 +369,7 @@ enum ClipStore {
     }
 
     static func encode(_ c: ClipItem, inlineImage: Bool) -> StoredClip? {
-        var s = StoredClip(id: c.id, date: c.date, sourceID: c.sourceID, sourceName: c.sourceName, linkTitle: c.linkTitle, type: "text")
+        var s = StoredClip(id: c.id, date: c.date, sourceID: c.sourceID, sourceName: c.sourceName, linkTitle: c.linkTitle, name: c.name, type: "text")
         switch c.kind {
         case .text(let t): s.text = t
         case .files(let urls): s.type = "files"; s.paths = urls.map(\.path)
@@ -406,6 +409,7 @@ enum ClipStore {
         }
         var item = ClipItem(kind: kind, date: s.date, sourceID: s.sourceID, sourceName: s.sourceName, id: s.id)
         item.linkTitle = s.linkTitle
+        item.name = s.name
         return item
     }
 
@@ -602,6 +606,19 @@ final class ClipboardWatcher {
     }
 
     func clearHistory() { m.clips.removeAll() }
+
+    /// Đặt tên cho một mục (nil = bỏ tên). Mục đã ghim thì lưu luôn.
+    func setName(_ item: ClipItem, _ name: String?) {
+        let n = name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let value = (n?.isEmpty ?? true) ? nil : n
+        for i in m.clips.indices where m.clips[i].id == item.id || m.clips[i].sameContent(item) { m.clips[i].name = value }
+        var pinChanged = false
+        for i in m.pins.indices where m.pins[i].id == item.id || m.pins[i].sameContent(item) {
+            m.pins[i].name = value
+            pinChanged = true
+        }
+        if pinChanged { ClipStore.savePins(m.pins) }
+    }
 
     /// Link có mã riêng (đăng nhập một lần, đặt lại mật khẩu, huỷ đăng ký…) mà mở thử là có thể mất hiệu lực
     /// hoặc làm luôn việc đó: không mở.
@@ -948,7 +965,12 @@ struct ClipCard: View {
             if let icon = AppIcons.icon(item.sourceID) {
                 Image(nsImage: icon).resizable().frame(width: 13, height: 13)
             }
-            Text(item.date, style: .relative).font(.system(size: 9)).lineLimit(1)
+            if let name = item.name {
+                Image(systemName: "tag.fill").font(.system(size: 8)).foregroundStyle(Color.orange)
+                Text(name).font(.system(size: 9.5, weight: .semibold)).lineLimit(1)
+            } else {
+                Text(item.date, style: .relative).font(.system(size: 9)).lineLimit(1)
+            }
             Spacer(minLength: 2)
             Button {
                 ClipboardWatcher.shared?.togglePin(item)
@@ -978,6 +1000,16 @@ struct ClipCard: View {
     @ViewBuilder private func menu(pinned: Bool) -> some View {
         Button("Sao chép") { ClipboardWatcher.shared?.restore(item) }
         Button(pinned ? "Bỏ ghim" : "Ghim") { ClipboardWatcher.shared?.togglePin(item) }
+        Button(item.name == nil ? "Đặt tên…" : "Đổi tên…") {
+            if let n = Prompt.text(title: item.name == nil ? "Đặt tên cho mục này" : "Đổi tên",
+                                   message: "Tên hiện dưới thẻ và tìm được bằng ô tìm.",
+                                   value: item.name ?? "", ok: "Lưu") {
+                ClipboardWatcher.shared?.setName(item, n)
+            }
+        }
+        if item.name != nil {
+            Button("Bỏ tên") { ClipboardWatcher.shared?.setName(item, nil) }
+        }
         if item.category == .link, let t = item.text, let u = ClipParse.link(t) {
             Button("Mở liên kết") { NSWorkspace.shared.open(u) }
         }

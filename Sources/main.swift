@@ -183,6 +183,7 @@ final class NotchModel: ObservableObject {
     @Published var clipCategory: ClipCategory?
     @Published var clipApp: String?
     @Published var shelfKind: ShelfKind?
+    @Published var shelfHover: URL?
     @Published var libraryTab: LibraryTab = .clipboard
     @Published var clipSearch = ""
     @Published var clipSelection: UUID?
@@ -264,6 +265,7 @@ final class NotchModel: ObservableObject {
     }
     /// File đang chọn, theo đúng thứ tự trên kệ.
     var selectedShelf: [URL] { shelf.filter { shelfSelection.contains($0) } }
+    func saveShelfNow() { saveShelf() }
     private func saveShelf() {
         UserDefaults.standard.set(shelf.map(\.path), forKey: "shelf")
     }
@@ -1023,11 +1025,27 @@ struct TimerView: View {
                     modeButton(.stopwatch, "Bấm giờ", "stopwatch")
                     modeButton(.countdown, "Đếm ngược", "timer")
                 }
-                TimelineView(.periodic(from: .now, by: 0.25)) { ctx in
-                    Text(formatClock(m.timer.display(at: ctx.date), alwaysHours: true))
-                        .font(.system(size: 40, weight: .semibold, design: .rounded))
+                if m.timer.mode == .stopwatch {
+                    // Bấm giờ có phần trăm giây: vẽ lại theo khung hình chỉ khi đang chạy và mục này đang mở.
+                    TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !m.timer.running)) { ctx in
+                        let t = m.timer.display(at: ctx.date)
+                        HStack(alignment: .firstTextBaseline, spacing: 0) {
+                            Text(formatClock(t, alwaysHours: true))
+                                .font(.system(size: 40, weight: .semibold, design: .rounded))
+                            Text(String(format: ",%02d", Int((t - t.rounded(.down)) * 100)))
+                                .font(.system(size: 24, weight: .semibold, design: .rounded))
+                                .foregroundStyle((m.timer.running ? Color.orange : Color.white).opacity(0.7))
+                        }
                         .monospacedDigit()
                         .foregroundStyle(m.timer.running ? Color.orange : Color.white)
+                    }
+                } else {
+                    TimelineView(.periodic(from: .now, by: 0.25)) { ctx in
+                        Text(formatClock(m.timer.display(at: ctx.date), alwaysHours: true))
+                            .font(.system(size: 40, weight: .semibold, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(m.timer.running ? Color.orange : Color.white)
+                    }
                 }
                 HStack(spacing: 8) {
                     Button(m.timer.running ? "Tạm dừng" : (m.timer.accumulated > 0 ? "Tiếp tục" : "Bắt đầu")) {
@@ -1061,7 +1079,7 @@ struct TimerView: View {
                 }
             } else {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Bấm giờ chạy từ 00:00:00").font(.system(size: 12, weight: .semibold))
+                    Text("Bấm giờ tới phần trăm giây").font(.system(size: 12, weight: .semibold))
                     Text("Đang chạy thì tai thỏ hiện giờ ở hai bên, rê chuột vào để dừng hoặc đặt lại.")
                         .font(.system(size: 11)).foregroundStyle(.white.opacity(0.55))
                         .fixedSize(horizontal: false, vertical: true)
@@ -1564,7 +1582,7 @@ struct ShelfItem: View {
         .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 13, style: .continuous)
-                .strokeBorder(selected ? Color.accentColor : Color.white.opacity(0.1), lineWidth: selected ? 2 : 1)
+                .strokeBorder(selected ? Color.accentColor : Color.white.opacity(m.shelfHover == url ? 0.28 : 0.1), lineWidth: selected ? 2 : 1)
         )
         .overlay(alignment: .topTrailing) {
             if selected {
@@ -1575,7 +1593,10 @@ struct ShelfItem: View {
                     .transition(.scale.combined(with: .opacity))
             }
         }
+        .scaleEffect(m.shelfHover == url ? 1.03 : 1)
+        .shadow(color: .black.opacity(m.shelfHover == url ? 0.4 : 0), radius: 8, y: 3)
         .animation(.spring(response: 0.25, dampingFraction: 0.8), value: selected)
+        .animation(.spring(response: 0.25, dampingFraction: 0.8), value: m.shelfHover == url)
         .opacity(exists ? 1 : 0.45)
         .overlay(FileDragArea(url: url, m: m))
         .help(url.path)
@@ -1608,6 +1629,18 @@ final class FileDragNSView: NSView, NSDraggingSource {
     private var dragged: [URL] = []
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    // Rê chuột lên thẻ: báo cho SwiftUI để thẻ nổi lên giống thẻ Bộ nhớ tạm.
+    private var tracking: NSTrackingArea?
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking { removeTrackingArea(tracking) }
+        let t = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self, userInfo: nil)
+        addTrackingArea(t)
+        tracking = t
+    }
+    override func mouseEntered(with event: NSEvent) { model?.shelfHover = url }
+    override func mouseExited(with event: NSEvent) { if model?.shelfHover == url { model?.shelfHover = nil } }
 
     /// Các file sẽ tác động: cả vùng chọn nếu file này nằm trong đó, không thì chỉ file này.
     private var targets: [URL] {
@@ -1707,6 +1740,9 @@ final class FileDragNSView: NSView, NSDraggingSource {
         menu.addItem(ClosureMenuItem(n > 1 ? "Gửi AirDrop \(n) file" : "Gửi AirDrop") { Actions.airDrop(us) })
         menu.addItem(ClosureMenuItem(n > 1 ? "Sao chép \(n) file" : "Sao chép") { Actions.copyFiles(us) })
         menu.addItem(ClosureMenuItem("Hiện trong Finder") { NSWorkspace.shared.activateFileViewerSelecting(us) })
+        if n == 1, let u = us.first, FileManager.default.fileExists(atPath: u.path) {
+            menu.addItem(ClosureMenuItem("Đổi tên file…") { [weak m] in if let m { ShelfRename.run(u, m: m) } })
+        }
         let tools = NSMenuItem(title: "Xử lý", action: nil, keyEquivalent: "")
         let sub = NSMenu()
         for op in ShelfTools.ops(for: us) {
@@ -1807,6 +1843,17 @@ struct NotesView: View {
                     Button("Lưu vào Notes") { NotesSaver.save(m) }
                         .buttonStyle(PillButton(prominent: true))
                         .disabled(m.noteDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    Button {
+                        AppDelegate.shared?.showLibrary(.notes)
+                    } label: {
+                        Image(systemName: "arrow.up.left.and.arrow.down.right")
+                            .font(.system(size: 11, weight: .bold))
+                            .frame(width: 26, height: 26)
+                            .background(Circle().fill(Color.white.opacity(0.09)))
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Mở bảng lớn")
                 }
             }
             if !m.notes.isEmpty {
@@ -3717,6 +3764,8 @@ enum TipTopic: String, CaseIterable, Identifiable {
                               "AirDrop, Copy and Process use the selection, or the whole shelf when nothing is selected.")),
             ("square.grid.2x2", L("File hiện thành thẻ có ảnh xem trước. Lọc theo Ảnh, Video, PDF, Tài liệu, Thư mục ở hàng trên. Nút ⤢ (hoặc ⌃⌘0) mở bảng lớn chứa hết.",
                                  "Files show as preview cards. Filter by Images, Videos, PDFs, Documents, Folders. The ⤢ button (or ⌃⌘0) opens the big board.")),
+            ("pencil", L("Chuột phải một file → Đổi tên file… để đổi tên ngay (đổi luôn file gốc trong Finder).",
+                        "Right-click a file → Rename File… (renames the original in Finder).")),
             ("wand.and.stars", L("Xử lý: đổi ảnh sang JPG / PNG / HEIC, nén ảnh, thu nhỏ, xoá nền, gộp PDF, nén ZIP. File mới nằm cạnh file gốc, file gốc giữ nguyên.",
                                 "Process: convert images to JPG / PNG / HEIC, compress, resize, remove background, merge into a PDF, ZIP. New files sit next to the originals.")),
         ]
@@ -3729,6 +3778,8 @@ enum TipTopic: String, CaseIterable, Identifiable {
                                  "Type to search. The chips filter by type (Link, Code, Image, Color…) and by the app you copied from. Typing @safari works too.")),
             ("arrow.up.left.and.arrow.down.right", L("Nút ⤢ hoặc ⌃⌘0 mở bảng lớn: một cửa sổ chứa hết Bộ nhớ tạm và Kệ file, chỉnh được cỡ.",
                                                     "The ⤢ button or ⌃⌘0 opens the big board: a resizable window with all your clipboard items and shelf files.")),
+            ("tag", L("Chuột phải → Đặt tên để đặt tên cho một mục; tên hiện dưới thẻ và tìm được.",
+                     "Right-click → Name to label an item; the name shows on the card and is searchable.")),
             ("pin", L("Bấm ghim để giữ lại lâu dài, xem ở Đã ghim. Mục đã ghim còn nguyên khi tắt app.",
                      "Pin items to keep them; see them under Pinned. Pinned items survive quitting.")),
             ("contextualmenu.and.cursorarrow", L("Chuột phải: sửa nhanh chữ (viết hoa, bỏ dấu, bỏ dòng trống…), chép mã màu dạng HEX / RGB / HSL, mở liên kết, dịch.",
@@ -3742,6 +3793,8 @@ enum TipTopic: String, CaseIterable, Identifiable {
                          "⌘ Enter or Save to Notes saves it to the Notes app, in a RinNotch folder.")),
             ("lock.shield", L("Lần đầu macOS hỏi quyền cho RinNotch dùng Ghi chú, bấm Cho phép.",
                              "macOS asks to let RinNotch use Notes the first time. Click Allow.")),
+            ("arrow.up.left.and.arrow.down.right", L("⌘C, ⌘V, ⌘A, ⌘Z dùng được trong ô gõ. Nút ⤢ mở ô ghi chú cỡ lớn trong bảng lớn.",
+                                                    "⌘C, ⌘V, ⌘A, ⌘Z work while typing. The ⤢ button opens a big notes editor in the big board.")),
             ("pin", L("Đang gõ thì tai thỏ không tự thu lại. Bấm ra ngoài hoặc Esc để đóng.",
                      "The notch stays open while you type. Click outside or press Esc to close.")),
         ]
@@ -4458,6 +4511,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         KeepAwake.shared.setup(model: model)
         KeyboardLock.shared.model = model
         CopyToast.shared.setup()
+        EditMenu.install()
         NotificationCenter.default.addObserver(forName: .rinHotkeysChanged, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.rebuildMenu() }
         }

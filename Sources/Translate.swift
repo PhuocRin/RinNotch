@@ -554,6 +554,19 @@ struct TranslateView: View {
                 if t.canReplace {
                     Button("Thay chỗ chọn") { t.replaceSelection() }.buttonStyle(PillButton(prominent: true))
                 }
+                if !LibraryWindow.shared.isFrontmost {
+                    Button {
+                        AppDelegate.shared?.showLibrary(.translate)
+                    } label: {
+                        Image(systemName: "arrow.up.left.and.arrow.down.right")
+                            .font(.system(size: 11, weight: .bold))
+                            .frame(width: 26, height: 26)
+                            .background(Circle().fill(Color.white.opacity(0.09)))
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Mở bảng lớn")
+                }
             }
         }
     }

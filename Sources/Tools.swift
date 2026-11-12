@@ -24,6 +24,66 @@ enum Access {
     }
 }
 
+// MARK: - Hộp nhập chữ (đặt tên, đổi tên)
+
+@MainActor
+enum Prompt {
+    static func text(title: String, message: String, value: String, ok: String, selectBaseName: Bool = false) -> String? {
+        let a = NSAlert()
+        a.messageText = title
+        a.informativeText = message
+        a.addButton(withTitle: ok)
+        a.addButton(withTitle: "Huỷ")
+        let tf = NSTextField(string: value)
+        tf.frame = NSRect(x: 0, y: 0, width: 300, height: 24)
+        a.accessoryView = tf
+        a.window.initialFirstResponder = tf
+        NSApp.activate()
+        a.window.level = .modalPanel
+        DispatchQueue.main.async {
+            // Đổi tên file: chọn sẵn phần tên, chừa đuôi file.
+            if selectBaseName, let editor = tf.currentEditor() {
+                let ns = value as NSString
+                let base = ns.deletingPathExtension as NSString
+                editor.selectedRange = NSRange(location: 0, length: base.length)
+            }
+        }
+        return a.runModal() == .alertFirstButtonReturn ? tf.stringValue : nil
+    }
+}
+
+// MARK: - Menu Sửa (để ⌘C ⌘V ⌘X ⌘A ⌘Z chạy trong ô chữ)
+
+@MainActor
+enum EditMenu {
+    /// App chạy trên thanh menu không có menu chính, nên ô chữ không nhận ⌘V… Gắn một menu chính ẩn có mục Sửa.
+    static func install() {
+        let main = NSMenu()
+        let appItem = NSMenuItem()
+        let appMenu = NSMenu()
+        // Không gán ⌘Q: tai thỏ đang nhận phím mà lỡ bấm ⌘Q (định thoát app khác) thì RinNotch tắt mất.
+        appMenu.addItem(withTitle: L("Thoát RinNotch", "Quit RinNotch"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "")
+        appItem.submenu = appMenu
+        main.addItem(appItem)
+
+        let editItem = NSMenuItem()
+        let edit = NSMenu(title: L("Sửa", "Edit"))
+        edit.addItem(withTitle: L("Hoàn tác", "Undo"), action: Selector(("undo:")), keyEquivalent: "z")
+        let redo = edit.addItem(withTitle: L("Làm lại", "Redo"), action: Selector(("redo:")), keyEquivalent: "z")
+        redo.keyEquivalentModifierMask = [.command, .shift]
+        edit.addItem(.separator())
+        edit.addItem(withTitle: L("Cắt", "Cut"), action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        edit.addItem(withTitle: L("Sao chép", "Copy"), action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.addItem(withTitle: L("Dán", "Paste"), action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        let plain = edit.addItem(withTitle: L("Dán và khớp kiểu", "Paste and Match Style"), action: #selector(NSTextView.pasteAsPlainText(_:)), keyEquivalent: "v")
+        plain.keyEquivalentModifierMask = [.command, .option, .shift]
+        edit.addItem(withTitle: L("Chọn tất cả", "Select All"), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editItem.submenu = edit
+        main.addItem(editItem)
+        NSApp.mainMenu = main
+    }
+}
+
 // MARK: - Giữ máy thức
 
 @MainActor
