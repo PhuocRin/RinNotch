@@ -17,13 +17,21 @@ mkdir -p "${APP}/Contents/MacOS" "${APP}/Contents/Resources" build/obj
 for ARCH in arm64 x86_64; do
   xcrun swiftc -O \
     -target "${ARCH}-apple-macos14.0" \
-    Sources/main.swift \
+    Sources/*.swift \
     -o "build/obj/RinNotch-${ARCH}" \
     -swift-version 5 -parse-as-library \
     -framework Cocoa -framework SwiftUI -framework AVFoundation -framework CoreAudio \
-    -framework IOKit -framework Carbon -framework ServiceManagement -framework UniformTypeIdentifiers -framework QuickLookThumbnailing
+    -framework IOKit -framework Carbon -framework ServiceManagement -framework UniformTypeIdentifiers -framework QuickLookThumbnailing \
+    -framework Vision -framework CoreImage -framework PDFKit -framework Network -framework NaturalLanguage -framework LinkPresentation \
+    -Xfrontend -disable-autolink-framework -Xfrontend Translation \
+    -Xlinker -weak_framework -Xlinker Translation
 done
 lipo -create build/obj/RinNotch-arm64 build/obj/RinNotch-x86_64 -output "${APP}/Contents/MacOS/RinNotch"
+# Bộ dịch (Translation) chỉ có từ macOS 15: phải nối kiểu "weak" thì máy macOS 14 mới mở được app.
+if otool -l "${APP}/Contents/MacOS/RinNotch" | grep -B3 "Translation.framework" | grep -q "LC_LOAD_DYLIB$"; then
+  echo "❌ Translation.framework đang nối kiểu bắt buộc, macOS 14 sẽ không mở được app"; exit 1
+fi
+otool -l "${APP}/Contents/MacOS/RinNotch" | grep -B3 "Translation.framework" | grep cmd || true
 cp Info.plist "${APP}/Contents/Info.plist"
 
 # Icon app + icon thanh menu (đơn sắc, tự đổi theo nền sáng/tối)

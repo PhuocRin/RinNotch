@@ -42,8 +42,10 @@ struct NotchGeometry {
 // MARK: - Dữ liệu
 
 enum Tab: String, CaseIterable, Identifiable {
-    case media, shelf, clipboard, notes, timer, system
+    case media, shelf, clipboard, notes, timer, system, tools, translate
     var id: String { rawValue }
+    /// Số trên bàn phím: ⌃⌘ + số mở thẳng mục này, hoặc bấm số khi tai thỏ đang mở.
+    var number: Int { (Tab.allCases.firstIndex(of: self) ?? 0) + 1 }
     var title: String {
         switch self {
         case .media: return "Nhạc"
@@ -52,6 +54,8 @@ enum Tab: String, CaseIterable, Identifiable {
         case .notes: return "Ghi chú"
         case .timer: return "Hẹn giờ"
         case .system: return "Hệ thống"
+        case .tools: return "Công cụ"
+        case .translate: return "Dịch nhanh"
         }
     }
     var symbol: String {
@@ -62,6 +66,8 @@ enum Tab: String, CaseIterable, Identifiable {
         case .notes: return "square.and.pencil"
         case .timer: return "timer"
         case .system: return "cpu"
+        case .tools: return "wrench.and.screwdriver"
+        case .translate: return "character.bubble"
         }
     }
 }
@@ -82,6 +88,10 @@ enum Transient: Equatable {
     case unplugged(percent: Int)
     case lowBattery(percent: Int)
     case timerDone(minutes: Int)
+    case offline
+    case online
+    case colorPicked(hex: String)
+    case message(symbol: String, title: String, detail: String)
 }
 
 struct NowPlaying: Equatable {
@@ -145,36 +155,6 @@ struct RecordingInfo: Equatable {
     }
 }
 
-enum ClipKind {
-    case text(String)
-    case files([URL])
-    case image(NSImage)
-}
-
-struct ClipItem: Identifiable {
-    let id = UUID()
-    let kind: ClipKind
-    let date = Date()
-
-    var preview: String {
-        switch kind {
-        case .text(let s):
-            return s.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
-        case .files(let urls):
-            return urls.count == 1 ? urls[0].lastPathComponent : "\(urls.count) file: \(urls[0].lastPathComponent)…"
-        case .image:
-            return "Hình ảnh"
-        }
-    }
-    var symbol: String {
-        switch kind {
-        case .text(let s): return (s.hasPrefix("http://") || s.hasPrefix("https://")) ? "link" : "text.alignleft"
-        case .files: return "doc"
-        case .image: return "photo"
-        }
-    }
-}
-
 struct NoteItem: Identifiable, Codable {
     var id = UUID()
     var text: String
@@ -198,6 +178,18 @@ final class NotchModel: ObservableObject {
     var shelfAnchor: URL?
     var marqueeActive = false
     @Published var clips: [ClipItem] = []
+    @Published var pins: [ClipItem] = []
+    @Published var clipFilter: ClipFilter = .recent
+    @Published var clipSearch = ""
+    @Published var clipSelection: UUID?
+    @Published var clipFlash: UUID?
+    @Published var shelfStatus: String?
+    @Published var shelfBusy = false
+    @Published var keepAwakeOn = false
+    @Published var keepAwakeUntil: Date?
+    @Published var keyboardLockUntil: Date?
+    @Published var lockEscCount = 0
+    @Published var lastColor: String?
     @Published var notes: [NoteItem] = []
     @Published var noteDraft = ""
     @Published var noteStatus: String?
@@ -209,9 +201,19 @@ final class NotchModel: ObservableObject {
 
     var musicCompact: Bool { Prefs.showMusic && nowPlaying?.playing == true && !(nowPlaying?.title.isEmpty ?? true) }
     var timerCompact: Bool { Prefs.showTimer && timer.running }
+    var awakeCompact: Bool { Prefs.showAwake && keepAwakeOn }
 
     var draggingOut = false
     private var transientTimer: Timer?
+    private var shelfStatusWork: DispatchWorkItem?
+
+    func flashShelfStatus(_ text: String) {
+        shelfStatus = text
+        shelfStatusWork?.cancel()
+        let w = DispatchWorkItem { [weak self] in MainActor.assumeIsolated { self?.shelfStatus = nil } }
+        shelfStatusWork = w
+        DispatchQueue.main.asyncAfter(deadline: .now() + 7, execute: w)
+    }
 
     init() {
         let d = UserDefaults.standard
@@ -322,9 +324,10 @@ struct IslandView: View {
     enum Phase: Equatable { case idle, compact, banner, expanded }
 
     var phase: Phase {
+        if m.keyboardLockUntil != nil { return .banner }
         if m.expanded { return .expanded }
         if m.transient != nil { return .banner }
-        if m.recording != nil || m.timerCompact || m.musicCompact { return .compact }
+        if m.recording != nil || m.timerCompact || m.musicCompact || m.awakeCompact { return .compact }
         return .idle
     }
 
@@ -332,7 +335,7 @@ struct IslandView: View {
         switch phase {
         case .idle: return CGSize(width: m.notchWidth, height: m.notchHeight)
         case .compact: return CGSize(width: m.notchWidth + (m.recording == nil && !m.timerCompact ? 130 : 210), height: m.notchHeight)
-        case .banner: return CGSize(width: max(m.notchWidth + 170, 400), height: m.notchHeight + 78)
+        case .banner: return CGSize(width: max(m.notchWidth + 170, m.keyboardLockUntil != nil ? 490 : 420), height: m.notchHeight + 78)
         case .expanded: return CGSize(width: NotchController.expandedWidth, height: m.notchHeight + 224)
         }
     }
@@ -413,6 +416,10 @@ struct CompactView: View {
             .font(.system(size: 12, weight: .semibold))
         } else if m.musicCompact {
             ArtworkView(image: m.artwork, size: 20, radius: 5)
+        } else if m.awakeCompact {
+            Image(systemName: "cup.and.saucer.fill")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Color.teal)
         }
     }
 
@@ -437,6 +444,13 @@ struct CompactView: View {
             }
         } else if m.musicCompact {
             MusicBars().frame(width: 18, height: 18)
+        } else if m.awakeCompact {
+            TimelineView(.periodic(from: .now, by: 30)) { ctx in
+                Text(m.keepAwakeUntil.map { "\(max(Int($0.timeIntervalSince(ctx.date) / 60 + 0.99), 1))p" } ?? "∞")
+                    .font(.system(size: 11, weight: .semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(Color.teal)
+            }
         }
     }
 }
@@ -508,7 +522,76 @@ struct BannerView: View {
     var body: some View {
         VStack(spacing: 0) {
             Color.clear.frame(height: m.notchHeight)
+            if let until = m.keyboardLockUntil {
+                lockRow(until: until)
+            } else {
+                transientRow
+            }
+        }
+        .foregroundStyle(.white)
+    }
+
+    func lockRow(until: Date) -> some View {
+        HStack(spacing: 14) {
+            Image(systemName: "keyboard.badge.ellipsis")
+                .font(.system(size: 26))
+                .foregroundStyle(Color.orange)
+                .frame(width: 46)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Đang khoá bàn phím để lau").font(.system(size: 14, weight: .semibold)).foregroundStyle(Color.orange)
+                TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                    Text(m.lockEscCount > 0 ? "Esc \(m.lockEscCount)/5 · tự mở sau \(formatClock(until.timeIntervalSince(ctx.date)))"
+                                            : "Bấm Esc 5 lần để mở · tự mở sau \(formatClock(until.timeIntervalSince(ctx.date)))")
+                        .font(.system(size: 12)).monospacedDigit().foregroundStyle(.white.opacity(0.6))
+                }
+            }
+            Spacer(minLength: 0)
+            Button("Mở khoá") { KeyboardLock.shared.unlock() }.buttonStyle(PillButton(prominent: true))
+        }
+        .padding(.horizontal, 22)
+        .frame(maxHeight: .infinity)
+    }
+
+    func simpleRow(symbol: String, tint: Color, title: String, detail: String) -> some View {
+        HStack(spacing: 14) {
+            Image(systemName: symbol)
+                .font(.system(size: 26))
+                .foregroundStyle(tint)
+                .frame(width: 46)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).font(.system(size: 14, weight: .semibold)).foregroundStyle(tint)
+                Text(detail).font(.system(size: 12)).foregroundStyle(.white.opacity(0.6)).lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 22)
+        .frame(maxHeight: .infinity)
+    }
+
+    @ViewBuilder var transientRow: some View {
             switch m.transient {
+            case .offline:
+                simpleRow(symbol: "wifi.slash", tint: .red, title: "Mất kết nối mạng", detail: "Kiểm tra Wi-Fi hoặc dây mạng")
+            case .online:
+                simpleRow(symbol: "wifi", tint: .green, title: "Đã có mạng lại", detail: "Kết nối internet đã trở lại")
+            case .message(let symbol, let title, let detail):
+                simpleRow(symbol: symbol, tint: .white, title: title, detail: detail)
+            case .colorPicked(let hex):
+                HStack(spacing: 14) {
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color(nsColor: ClipParse.color(hex) ?? .gray))
+                        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.white.opacity(0.35), lineWidth: 1.5))
+                        .frame(width: 40, height: 40)
+                        .padding(.horizontal, 3)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(hex).font(.system(size: 16, weight: .semibold, design: .monospaced))
+                        Text("Đã chép mã màu · chuột phải trong Bộ nhớ tạm để lấy dạng RGB, HSL")
+                            .font(.system(size: 11)).foregroundStyle(.white.opacity(0.6)).lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 22)
+                .frame(maxHeight: .infinity)
             case .charging(let p):
                 chargeRow(percent: p, charging: true)
             case .unplugged(let p):
@@ -572,8 +655,6 @@ struct BannerView: View {
             case .none:
                 EmptyView()
             }
-        }
-        .foregroundStyle(.white)
     }
 
     func chargeRow(percent: Int, charging: Bool) -> some View {
@@ -723,17 +804,17 @@ struct ExpandedView: View {
                     } label: {
                         HStack(spacing: 6) {
                             Image(systemName: t.symbol).font(.system(size: 15, weight: .semibold))
-                            if m.tab == t { Text(t.title).font(.system(size: 13, weight: .semibold)) }
+                            if m.tab == t && m.recording == nil { Text(t.title).font(.system(size: 13, weight: .semibold)) }
                         }
                             .frame(minWidth: 24, minHeight: 22)
-                            .padding(.horizontal, 12)
+                            .padding(.horizontal, 9)
                             .padding(.vertical, 6)
                             .background(Capsule().fill(Color.white.opacity(m.tab == t ? 0.2 : 0.06)))
                             .foregroundStyle(.white.opacity(m.tab == t ? 1 : 0.75))
                             .contentShape(Capsule())
                     }
                     .buttonStyle(.plain)
-                    .help(t.title)
+                    .help(tabHelp(t))
                 }
                 Spacer(minLength: 0)
                 if let r = m.recording {
@@ -789,6 +870,8 @@ struct ExpandedView: View {
                 case .notes: NotesView(m: m)
                 case .timer: TimerView(m: m)
                 case .system: SystemView()
+                case .tools: ToolsView(m: m)
+                case .translate: TranslateView(m: m)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -806,6 +889,13 @@ struct ExpandedView: View {
             }
             return true
         }
+    }
+
+    private func tabHelp(_ t: Tab) -> String {
+        guard let a = HotAction(rawValue: t.rawValue), HotkeyCenter.isEnabled(a), let c = HotkeyCenter.combo(a) else {
+            return "\(t.title) · bấm số \(t.number)"
+        }
+        return "\(t.title) · \(c.display), hoặc bấm số \(t.number) khi đang mở"
     }
 }
 
@@ -1336,13 +1426,31 @@ struct ShelfView: View {
                 }
                 .frame(height: ShelfItem.height + Self.rowPad * 2 + 6)
                 HStack(spacing: 8) {
-                    Text(sel.isEmpty ? "Kéo chuột để chọn nhiều · kéo ra = sao chép · giữ ⌘ = chuyển"
-                                     : "Đã chọn \(sel.count) file · kéo ra là đi cả nhóm")
-                        .font(.system(size: 11)).foregroundStyle(.white.opacity(0.55))
+                    if m.shelfBusy {
+                        ProgressView().controlSize(.mini)
+                    }
+                    Text(m.shelfStatus ?? (sel.isEmpty ? "Kéo chuột để chọn nhiều · kéo ra = sao chép · giữ ⌘ = chuyển"
+                                     : "Đã chọn \(sel.count) file · kéo ra là đi cả nhóm"))
+                        .font(.system(size: 11)).foregroundStyle(m.shelfStatus != nil ? Color.green.opacity(0.9) : .white.opacity(0.55))
                         .lineLimit(1)
                     Spacer(minLength: 4)
                     Button("AirDrop") { Actions.airDrop(sel.isEmpty ? m.shelf : sel) }.buttonStyle(PillButton(prominent: true))
                     Button("Sao chép") { Actions.copyFiles(sel.isEmpty ? m.shelf : sel) }.buttonStyle(PillButton())
+                    let targets = sel.isEmpty ? m.shelf : sel
+                    Menu {
+                        ForEach(ShelfTools.ops(for: targets), id: \.self) { op in
+                            Button(op.title) { ShelfTools.run(op, on: targets, m: m) }
+                        }
+                    } label: {
+                        Text("Xử lý").font(.system(size: 11, weight: .semibold))
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.visible)
+                    .fixedSize()
+                    .padding(.horizontal, 10).padding(.vertical, 5)
+                    .background(Capsule().fill(Color.white.opacity(0.12)))
+                    .disabled(m.shelfBusy)
+                    .help("Đổi định dạng, nén, thu nhỏ, xoá nền ảnh · gộp PDF · nén ZIP")
                     if sel.isEmpty {
                         Button("Xoá kệ") { m.clearShelf() }.buttonStyle(PillButton())
                     } else {
@@ -1507,6 +1615,14 @@ final class FileDragNSView: NSView, NSDraggingSource {
         menu.addItem(ClosureMenuItem(n > 1 ? "Gửi AirDrop \(n) file" : "Gửi AirDrop") { Actions.airDrop(us) })
         menu.addItem(ClosureMenuItem(n > 1 ? "Sao chép \(n) file" : "Sao chép") { Actions.copyFiles(us) })
         menu.addItem(ClosureMenuItem("Hiện trong Finder") { NSWorkspace.shared.activateFileViewerSelecting(us) })
+        let tools = NSMenuItem(title: "Xử lý", action: nil, keyEquivalent: "")
+        let sub = NSMenu()
+        for op in ShelfTools.ops(for: us) {
+            sub.addItem(ClosureMenuItem(op.title) { [weak m] in if let m { ShelfTools.run(op, on: us, m: m) } })
+        }
+        tools.submenu = sub
+        tools.isEnabled = !m.shelfBusy
+        menu.addItem(tools)
         menu.addItem(.separator())
         menu.addItem(ClosureMenuItem("Chọn tất cả") { [weak m] in m?.shelfSelection = Set(m?.shelf ?? []) })
         menu.addItem(ClosureMenuItem(n > 1 ? "Bỏ \(n) file khỏi kệ" : "Bỏ khỏi kệ") { [weak m] in m?.removeFromShelf(us) })
@@ -1551,63 +1667,6 @@ struct FileThumb: View {
             )
             if let rep = try? await QLThumbnailGenerator.shared.generateBestRepresentation(for: req) {
                 thumb = rep.nsImage
-            }
-        }
-    }
-}
-
-// MARK: Bộ nhớ tạm
-
-struct ClipboardView: View {
-    @ObservedObject var m: NotchModel
-
-    var body: some View {
-        if m.clips.isEmpty {
-            VStack(spacing: 6) {
-                Image(systemName: "doc.on.clipboard").font(.system(size: 22))
-                Text("Copy gì đó, nó sẽ hiện ở đây").font(.system(size: 12, weight: .semibold))
-                Text("Mật khẩu copy từ trình quản lý mật khẩu sẽ không được lưu")
-                    .font(.system(size: 11)).foregroundStyle(.white.opacity(0.55))
-            }
-            .foregroundStyle(.white.opacity(0.8))
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
-            VStack(spacing: 6) {
-                ScrollView(.vertical, showsIndicators: false) {
-                    VStack(spacing: 5) {
-                        ForEach(m.clips) { item in
-                            Button {
-                                ClipboardWatcher.shared?.restore(item)
-                            } label: {
-                                HStack(spacing: 10) {
-                                    Image(systemName: item.symbol)
-                                        .font(.system(size: 11))
-                                        .frame(width: 16)
-                                        .foregroundStyle(.white.opacity(0.6))
-                                    Text(item.preview)
-                                        .font(.system(size: 12))
-                                        .lineLimit(1)
-                                        .truncationMode(.tail)
-                                    Spacer(minLength: 6)
-                                    Text(item.date, style: .relative)
-                                        .font(.system(size: 10))
-                                        .foregroundStyle(.white.opacity(0.4))
-                                }
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 7)
-                                .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.07)))
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .help("Bấm để copy lại")
-                        }
-                    }
-                }
-                HStack {
-                    Text("Bấm một dòng để copy lại").font(.system(size: 11)).foregroundStyle(.white.opacity(0.55))
-                    Spacer()
-                    Button("Xoá hết") { m.clips.removeAll() }.buttonStyle(PillButton())
-                }
             }
         }
     }
@@ -1763,75 +1822,6 @@ enum Actions {
         pb.clearContents()
         pb.writeObjects(items as [NSURL])
         ClipboardWatcher.shared?.ignore(pb.changeCount)
-    }
-}
-
-// MARK: - Theo dõi bộ nhớ tạm
-
-@MainActor
-final class ClipboardWatcher {
-    static var shared: ClipboardWatcher?
-    private let m: NotchModel
-    private var last = NSPasteboard.general.changeCount
-    private var ignored = -1
-    private var timer: Timer?
-
-    private static let skipTypes: Set<String> = [
-        "org.nspasteboard.ConcealedType",
-        "org.nspasteboard.TransientType",
-        "org.nspasteboard.AutoGeneratedType",
-        "com.agilebits.onepassword",
-    ]
-
-    init(model: NotchModel) {
-        m = model
-        // Bộ nhớ tạm không có thông báo khi đổi, phải hỏi số đếm (rất nhẹ). Cho phép lệch để macOS gom việc.
-        timer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.poll() }
-        }
-        timer?.tolerance = 0.2
-    }
-
-    func ignore(_ count: Int) {
-        ignored = count
-        last = count
-    }
-
-    private func poll() {
-        let pb = NSPasteboard.general
-        guard pb.changeCount != last else { return }
-        last = pb.changeCount
-        if pb.changeCount == ignored { return }
-        let types = (pb.types ?? []).map(\.rawValue)
-        if types.contains(where: { Self.skipTypes.contains($0) }) { return }
-
-        var item: ClipItem?
-        if let urls = pb.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL], !urls.isEmpty {
-            item = ClipItem(kind: .files(urls))
-        } else if let s = pb.string(forType: .string), !s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            item = ClipItem(kind: .text(String(s.prefix(20000))))
-        } else if let img = NSImage(pasteboard: pb) {
-            item = ClipItem(kind: .image(img))
-        }
-        guard let item else { return }
-        if case .text(let s) = item.kind {
-            m.clips.removeAll { if case .text(let o) = $0.kind { return o == s }; return false }
-        }
-        m.clips.insert(item, at: 0)
-        if m.clips.count > 20 { m.clips.removeLast(m.clips.count - 20) }
-    }
-
-    func restore(_ item: ClipItem) {
-        let pb = NSPasteboard.general
-        pb.clearContents()
-        switch item.kind {
-        case .text(let s): pb.setString(s, forType: .string)
-        case .files(let urls): pb.writeObjects(urls as [NSURL])
-        case .image(let img): pb.writeObjects([img])
-        }
-        ignore(pb.changeCount)
-        m.clips.removeAll { $0.id == item.id }
-        m.clips.insert(item, at: 0)
     }
 }
 
@@ -2733,6 +2723,9 @@ final class PowerWatcher {
             m.showTransient(ac ? .charging(percent: r.percent) : .unplugged(percent: r.percent), seconds: 3)
             return
         }
+        if !ac, r.percent <= 10, KeepAwake.shared.active, Prefs.awakeStopLowBattery {
+            KeepAwake.shared.stop(.lowBattery)
+        }
         // Pin yếu: báo một lần khi xuống tới 20% và 10% lúc đang dùng pin.
         if !ac, Prefs.showLowBattery, let last = lastPercent {
             for mark in [20, 10] where last > mark && r.percent <= mark {
@@ -2761,6 +2754,9 @@ final class NotchController {
     private var dragCountAtDown = NSPasteboard(name: .drag).changeCount
     private var monitors: [Any] = []
     private let panelSize = CGSize(width: 720, height: 320)
+    /// Mở bằng phím tắt: không tự thu khi chuột chưa từng vào tai thỏ.
+    private var keyboardOpen = false
+    private var mouseVisited = false
 
     init(model: NotchModel) {
         self.model = model
@@ -2816,11 +2812,8 @@ final class NotchController {
             return e
         }) { monitors.append(l) }
         if let l = NSEvent.addLocalMonitorForEvents(matching: [.keyDown], handler: { [weak self] e in
-            if e.keyCode == UInt16(kVK_Escape) {
-                MainActor.assumeIsolated { self?.collapse() }
-                return nil
-            }
-            return e
+            let handled = MainActor.assumeIsolated { self?.keyDown(e) ?? false }
+            return handled ? nil : e
         }) { monitors.append(l) }
     }
 
@@ -2848,19 +2841,66 @@ final class NotchController {
         return CGRect(x: f.midX - w / 2, y: f.maxY - h, width: w, height: h)
     }
 
+    /// Phím bấm khi tai thỏ đang được gõ: Esc thu lại, số 1–8 chuyển mục, ↑ ↓ ↩ chọn trong Bộ nhớ tạm.
+    private func keyDown(_ e: NSEvent) -> Bool {
+        guard model.expanded else { return false }
+        if e.keyCode == UInt16(kVK_Escape) {
+            collapse()
+            return true
+        }
+        // Đang gõ chữ (ghi chú, ô tìm, ô dịch) thì để phím tới ô chữ.
+        if panel.firstResponder is NSTextView { return false }
+        let mods = e.modifierFlags.intersection([.command, .control, .option, .shift])
+        guard mods.isEmpty else { return false }
+        if let ch = e.charactersIgnoringModifiers, let n = Int(ch), n >= 1, n <= Tab.allCases.count {
+            model.tab = Tab.allCases[n - 1]
+            return true
+        }
+        if model.tab == .clipboard {
+            let items = model.visibleClips
+            guard !items.isEmpty else { return false }
+            let i = items.firstIndex { $0.id == model.clipSelection }
+            switch Int(e.keyCode) {
+            case kVK_DownArrow:
+                model.clipSelection = items[min((i ?? -1) + 1, items.count - 1)].id
+                return true
+            case kVK_UpArrow:
+                model.clipSelection = items[max((i ?? items.count) - 1, 0)].id
+                return true
+            case kVK_Return, kVK_ANSI_KeypadEnter:
+                let item = i.map { items[$0] } ?? items[0]
+                ClipboardWatcher.shared?.restore(item)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+                    MainActor.assumeIsolated { self?.collapse() }
+                }
+                return true
+            default: break
+            }
+        }
+        return false
+    }
+
     private func mouseMoved() {
-        guard !model.hidden else { return }
+        guard !model.hidden, model.keyboardLockUntil == nil else { return }
         let p = NSEvent.mouseLocation
         if !model.expanded {
             guard notchRect.contains(p) else { return }
             let pressed = NSEvent.pressedMouseButtons & 1 != 0
             if pressed {
-                // Đang kéo file từ nơi khác lên tai thỏ → mở kệ file.
+                // Đang kéo file từ nơi khác lên tai thỏ → mở kệ file (cách mở nào cũng được).
                 if NSPasteboard(name: .drag).changeCount != dragCountAtDown {
                     expand(tab: .shelf)
                 }
-            } else {
+            } else if Prefs.openMode != .hotkey {
                 expand(tab: nil)
+            }
+        } else if keyboardOpen {
+            // Mở bằng phím: chuột vào rồi ra mới tự thu, chuột chưa vào thì giữ nguyên.
+            if expandedRect.contains(p) {
+                mouseVisited = true
+                collapseWork?.cancel()
+            } else if mouseVisited {
+                scheduleCollapse(force: false)
             }
         } else {
             if expandedRect.contains(p) {
@@ -2887,7 +2927,8 @@ final class NotchController {
         }
     }
 
-    func expand(tab: Tab?) {
+    func expand(tab: Tab?, byKeyboard: Bool = false) {
+        guard model.keyboardLockUntil == nil else { return }
         collapseWork?.cancel()
         if let tab {
             model.tab = tab
@@ -2897,17 +2938,30 @@ final class NotchController {
             else if model.musicCompact { model.tab = .media }
             else if let t = Tab(rawValue: Prefs.defaultTab) { model.tab = t }
         }
+        if byKeyboard {
+            if !model.expanded || !keyboardOpen { mouseVisited = expandedRect.contains(NSEvent.mouseLocation) }
+            keyboardOpen = true
+            model.clipSelection = nil
+            // Nhận phím ngay (gõ ghi chú, số chuyển mục) mà không giành focus của app đang dùng.
+            panel.makeKey()
+        }
         guard !model.expanded else { return }
         model.expanded = true
         panel.ignoresMouseEvents = false
+    }
+
+    /// Khoá / mở khoá bàn phím: banner cần nhận chuột để bấm Mở khoá.
+    func lockChanged() {
+        panel.ignoresMouseEvents = !(model.expanded || model.keyboardLockUntil != nil)
     }
 
     func scheduleCollapse(force: Bool) {
         guard model.expanded else { return }
         if !force {
             if model.draggingOut || model.marqueeActive { return }
-            // Đang gõ ghi chú thì không tự thu lại, bấm ra ngoài hoặc Esc mới thu.
-            if panel.isKeyWindow && model.tab == .notes && expandedRect.contains(NSEvent.mouseLocation) { return }
+            // Đang gõ chữ thì không tự thu lại, bấm ra ngoài hoặc Esc mới thu.
+            let typing = panel.isKeyWindow && panel.firstResponder is NSTextView
+            if typing && expandedRect.contains(NSEvent.mouseLocation) { return }
             if panel.isKeyWindow && model.tab == .notes && !model.noteDraft.isEmpty { return }
         }
         collapseWork?.cancel()
@@ -2924,13 +2978,16 @@ final class NotchController {
 
     func collapse() {
         collapseWork?.cancel()
+        keyboardOpen = false
+        mouseVisited = false
         guard model.expanded else { return }
         model.expanded = false
         model.dropTargeted = false
+        model.clipSelection = nil
         model.shelfSelection = []
         model.shelfAnchor = nil
         model.marqueeActive = false
-        panel.ignoresMouseEvents = true
+        panel.ignoresMouseEvents = model.keyboardLockUntil == nil
         if panel.isKeyWindow {
             _ = panel.makeFirstResponder(nil)
             NSWorkspace.shared.frontmostApplication?.activate()
@@ -2945,24 +3002,6 @@ final class NotchController {
         } else {
             panel.orderFrontRegardless()
         }
-    }
-}
-
-// MARK: - Phím tắt ⌥⌘N
-
-enum HotKey {
-    static var ref: EventHotKeyRef?
-
-    static func register() {
-        var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-        InstallEventHandler(GetApplicationEventTarget(), { _, _, _ in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { AppDelegate.shared?.toggleHidden() }
-            }
-            return noErr
-        }, 1, &spec, nil, nil)
-        let id = EventHotKeyID(signature: OSType(0x524E_4348), id: 1)
-        RegisterEventHotKey(UInt32(kVK_ANSI_N), UInt32(cmdKey | optionKey), id, GetApplicationEventTarget(), 0, &ref)
     }
 }
 
@@ -3003,9 +3042,33 @@ enum UpdateMode: String, CaseIterable {
     }
 }
 
+enum OpenMode: String, CaseIterable {
+    case hover, hotkey, both
+    var title: String {
+        switch self {
+        case .hover: return L("Rê chuột", "Hover")
+        case .hotkey: return L("Phím tắt", "Shortcut")
+        case .both: return L("Cả hai", "Both")
+        }
+    }
+}
+
 enum Prefs {
     private static let d = UserDefaults.standard
     private static func bool(_ k: String) -> Bool { d.object(forKey: k) as? Bool ?? true }
+
+    static var openMode: OpenMode { OpenMode(rawValue: d.string(forKey: "openMode") ?? "") ?? .both }
+    static var showAwake: Bool { bool("showAwake") }
+    static var showNetwork: Bool { bool("showNetwork") }
+    static var awakeStopLowBattery: Bool { bool("awakeStopLowBattery") }
+    static var awakeStopOnSleep: Bool { bool("awakeStopOnSleep") }
+    static var clipLimit: Int { max(d.object(forKey: "clipLimit") as? Int ?? 50, 10) }
+    /// Xem trước liên kết phải hỏi trang web: mặc định tắt, ai cần thì bật.
+    static var linkPreview: Bool { d.object(forKey: "linkPreview") as? Bool ?? false }
+    static var clipExcluded: [String] {
+        get { d.stringArray(forKey: "clipExcluded") ?? [] }
+        set { d.set(newValue, forKey: "clipExcluded") }
+    }
 
     static var showMusic: Bool { bool("showMusic") }
     static var showTimer: Bool { bool("showTimer") }
@@ -3200,75 +3263,191 @@ struct SettingsView: View {
     @AppStorage("showMusic") private var showMusic = true
     @AppStorage("showTimer") private var showTimer = true
     @AppStorage("showRecording") private var showRecording = true
+    @AppStorage("showAwake") private var showAwake = true
     @AppStorage("showHeadphones") private var showHeadphones = true
     @AppStorage("showCharging") private var showCharging = true
     @AppStorage("showLowBattery") private var showLowBattery = true
+    @AppStorage("showNetwork") private var showNetwork = true
     @AppStorage("defaultTab") private var defaultTab = "last"
+    @AppStorage("openMode") private var openMode = OpenMode.both.rawValue
+    @AppStorage("clipLimit") private var clipLimit = 50
+    @AppStorage("linkPreview") private var linkPreview = false
+    @AppStorage("awakeStopLowBattery") private var awakeStopLowBattery = true
+    @AppStorage("awakeStopOnSleep") private var awakeStopOnSleep = true
+    @State private var excluded = Prefs.clipExcluded
+    @State private var backupNote: String?
     @State private var login = SMAppService.mainApp.status == .enabled
 
     var body: some View {
-        VStack(spacing: 14) {
-            AppIconView(size: 64)
-            Text(L("Cài đặt RinNotch", "RinNotch Settings"))
-                .font(.system(size: 22, weight: .bold, design: .rounded))
+        ScrollView(.vertical, showsIndicators: true) {
+            VStack(spacing: 14) {
+                AppIconView(size: 64)
+                Text(L("Cài đặt RinNotch", "RinNotch Settings"))
+                    .font(.system(size: 22, weight: .bold, design: .rounded))
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text(L("Hiện ở hai bên tai thỏ", "Show beside the notch")).font(.system(size: 12, weight: .semibold))
-                Toggle(L("Nhạc / video đang phát", "Now playing"), isOn: $showMusic)
-                Toggle(L("Hẹn giờ đang chạy", "Running timer"), isOn: $showTimer)
-                Toggle(L("App đang ghi âm (sóng âm)", "Apps recording audio"), isOn: $showRecording)
-            }
-            .toggleStyle(.switch)
-            .font(.system(size: 13))
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .softCard(cornerRadius: 16)
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text(L("Thông báo thả xuống", "Drop-down alerts")).font(.system(size: 12, weight: .semibold))
-                Toggle(L("Tai nghe kết nối", "Headphones connected"), isOn: $showHeadphones)
-                Toggle(L("Cắm và rút sạc", "Charger plugged / unplugged"), isOn: $showCharging)
-                Toggle(L("Pin yếu 20% và 10%", "Low battery 20% and 10%"), isOn: $showLowBattery)
-            }
-            .toggleStyle(.switch)
-            .font(.system(size: 13))
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .softCard(cornerRadius: 16)
-
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Text(L("Rê chuột lên tai thỏ thì mở", "On hover, open")).font(.system(size: 13))
-                    Spacer()
-                    Picker("", selection: $defaultTab) {
-                        Text(L("Mục dùng gần nhất", "Last used")).tag("last")
-                        ForEach(Tab.allCases) { t in Text(t.title).tag(t.rawValue) }
+                section(L("Cách mở tai thỏ", "How to open the notch")) {
+                    Picker("", selection: $openMode) {
+                        ForEach(OpenMode.allCases, id: \.rawValue) { Text($0.title).tag($0.rawValue) }
                     }
+                    .pickerStyle(.segmented)
                     .labelsHidden()
-                    .frame(width: 170)
-                }
-                Toggle(L("Mở cùng máy", "Open at login"), isOn: $login)
-                    .toggleStyle(.switch)
-                    .font(.system(size: 13))
-                    .onChange(of: login) { on in
-                        do {
-                            if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
-                        } catch {
-                            login = SMAppService.mainApp.status == .enabled
+                    .onChange(of: openMode) { _ in HotkeyCenter.registerAll() }
+                    Text(openModeNote).noteText()
+                    if openMode != OpenMode.hotkey.rawValue {
+                        HStack {
+                            Text(L("Rê chuột lên tai thỏ thì mở", "On hover, open")).font(.system(size: 13))
+                            Spacer()
+                            Picker("", selection: $defaultTab) {
+                                Text(L("Mục dùng gần nhất", "Last used")).tag("last")
+                                ForEach(Tab.allCases) { t in Text(t.title).tag(t.rawValue) }
+                            }
+                            .labelsHidden()
+                            .frame(width: 170)
                         }
-                        AppDelegate.shared?.rebuildMenu()
                     }
-            }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .softCard(cornerRadius: 16)
+                }
 
-            Text(L("Phím tắt ⌥⌘N để ẩn / hiện RinNotch. Esc để thu tai thỏ lại.",
-                   "Press ⌥⌘N to hide / show RinNotch. Esc collapses the notch."))
-                .noteText()
-                .multilineTextAlignment(.center)
+                section(L("Phím tắt", "Shortcuts")) {
+                    ForEach(HotAction.allCases) { a in
+                        HStack(alignment: .top) {
+                            Text(a.title).font(.system(size: 13)).padding(.top, 4)
+                            Spacer()
+                            KeyRecorder(action: a)
+                        }
+                    }
+                    Text(L("Bấm vào ô rồi nhấn tổ hợp mới. ⌫ để tắt phím đó, Esc để huỷ. Tai thỏ đang mở thì bấm số 1–8 để chuyển mục, Esc để thu lại.",
+                           "Click a box, then press the new keys. ⌫ turns it off, Esc cancels. While the notch is open, press 1–8 to switch sections and Esc to close."))
+                        .noteText()
+                }
+
+                section(L("Hiện ở hai bên tai thỏ", "Show beside the notch")) {
+                    Toggle(L("Nhạc / video đang phát", "Now playing"), isOn: $showMusic)
+                    Toggle(L("Hẹn giờ đang chạy", "Running timer"), isOn: $showTimer)
+                    Toggle(L("App đang ghi âm (sóng âm)", "Apps recording audio"), isOn: $showRecording)
+                    Toggle(L("Đang giữ máy thức", "Keep awake"), isOn: $showAwake)
+                }
+
+                section(L("Thông báo thả xuống", "Drop-down alerts")) {
+                    Toggle(L("Tai nghe kết nối", "Headphones connected"), isOn: $showHeadphones)
+                    Toggle(L("Cắm và rút sạc", "Charger plugged / unplugged"), isOn: $showCharging)
+                    Toggle(L("Pin yếu 20% và 10%", "Low battery 20% and 10%"), isOn: $showLowBattery)
+                    Toggle(L("Mất mạng và có mạng lại", "Internet lost / back"), isOn: $showNetwork)
+                }
+
+                section(L("Bộ nhớ tạm", "Clipboard")) {
+                    HStack {
+                        Text(L("Giữ lại", "Keep")).font(.system(size: 13))
+                        Spacer()
+                        Picker("", selection: $clipLimit) {
+                            ForEach([20, 50, 100, 200], id: \.self) { n in Text(L("\(n) mục gần nhất", "Last \(n) items")).tag(n) }
+                        }
+                        .labelsHidden()
+                        .frame(width: 170)
+                    }
+                    Toggle(L("Xem trước tên trang của liên kết", "Show link titles"), isOn: $linkPreview)
+                    Text(L("Bật thì RinNotch mở trang của liên kết vừa chép để lấy tên trang. Lịch sử chỉ nằm trong máy, thoát app là xoá; mục đã ghim thì được giữ lại.",
+                           "When on, RinNotch loads copied links to read the page title. History stays on this Mac and clears when you quit; pinned items are kept."))
+                        .noteText()
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text(L("Không ghi khi copy từ app", "Ignore copies from")).font(.system(size: 13))
+                            Spacer()
+                            Button(L("Thêm app…", "Add app…")) { addExcluded() }.glassButton()
+                        }
+                        if excluded.isEmpty {
+                            Text(L("Chưa có app nào. Mật khẩu copy từ trình quản lý mật khẩu luôn được bỏ qua.",
+                                   "None yet. Passwords copied from password managers are always ignored."))
+                                .noteText()
+                        }
+                        ForEach(excluded, id: \.self) { id in
+                            HStack(spacing: 8) {
+                                if let icon = AppIcons.icon(id) { Image(nsImage: icon).resizable().frame(width: 18, height: 18) }
+                                Text(appName(id)).font(.system(size: 12))
+                                Spacer()
+                                Button {
+                                    excluded.removeAll { $0 == id }
+                                    Prefs.clipExcluded = excluded
+                                } label: { Image(systemName: "minus.circle") }
+                                .buttonStyle(.borderless)
+                            }
+                        }
+                    }
+                    HStack {
+                        Button(L("Xuất bản sao lưu…", "Export backup…")) {
+                            if let m = AppDelegate.shared?.model { ClipStore.exportBackup(m) }
+                        }
+                        .glassButton()
+                        Button(L("Nhập…", "Import…")) {
+                            if let m = AppDelegate.shared?.model {
+                                if let n = ClipStore.importBackup(m) { backupNote = L("Đã thêm \(n) mục", "Added \(n) items") }
+                                else { backupNote = nil }
+                            }
+                        }
+                        .glassButton()
+                        if let backupNote { Text(backupNote).font(.system(size: 11)).foregroundStyle(.green) }
+                    }
+                }
+
+                section(L("Giữ máy thức", "Keep awake")) {
+                    Toggle(L("Tự tắt khi pin dưới 10%", "Turn off below 10% battery"), isOn: $awakeStopLowBattery)
+                    Toggle(L("Tự tắt khi máy ngủ hoặc gập máy", "Turn off when the Mac sleeps"), isOn: $awakeStopOnSleep)
+                }
+
+                section(L("Chung", "General")) {
+                    Toggle(L("Mở cùng máy", "Open at login"), isOn: $login)
+                        .onChange(of: login) { on in
+                            do {
+                                if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
+                            } catch {
+                                login = SMAppService.mainApp.status == .enabled
+                            }
+                            AppDelegate.shared?.rebuildMenu()
+                        }
+                }
+            }
+            .panelStyle(width: 460)
         }
-        .panelStyle(width: 380)
+        .frame(width: 460, height: 640)
+    }
+
+    private var openModeNote: String {
+        switch OpenMode(rawValue: openMode) ?? .both {
+        case .hover: return L("Rê chuột lên tai thỏ là mở. Phím mở từng mục đang tắt (Ẩn / hiện và Dịch nhanh vẫn dùng được).",
+                              "Hover opens the notch. Section shortcuts are off (Hide / show and Translate still work).")
+        case .hotkey: return L("Rê chuột lên tai thỏ không mở nữa, chỉ mở bằng phím tắt. Kéo file thả lên tai thỏ vẫn mở Kệ file.",
+                               "Hovering no longer opens the notch, only shortcuts do. Dropping a file still opens the shelf.")
+        case .both: return L("Rê chuột hay bấm phím tắt đều mở được.", "Hover or shortcuts both open the notch.")
+        }
+    }
+
+    @ViewBuilder
+    private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).font(.system(size: 12, weight: .semibold))
+            content()
+        }
+        .toggleStyle(.switch)
+        .font(.system(size: 13))
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .softCard(cornerRadius: 16)
+    }
+
+    private func appName(_ id: String) -> String {
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) else { return id }
+        return FileManager.default.displayName(atPath: url.path).replacingOccurrences(of: ".app", with: "")
+    }
+
+    private func addExcluded() {
+        let p = NSOpenPanel()
+        p.directoryURL = URL(fileURLWithPath: "/Applications")
+        p.allowedContentTypes = [.application]
+        p.allowsMultipleSelection = true
+        guard p.runModal() == .OK else { return }
+        for u in p.urls {
+            if let id = Bundle(url: u)?.bundleIdentifier, !excluded.contains(id) { excluded.append(id) }
+        }
+        Prefs.clipExcluded = excluded
     }
 }
 
@@ -3334,7 +3513,7 @@ struct SupportView: View {
 // MARK: - Mẹo dùng
 
 enum TipTopic: String, CaseIterable, Identifiable {
-    case start, media, shelf, clipboard, notes, timer, system, alerts
+    case start, media, shelf, clipboard, notes, timer, system, tools, translate, alerts
     var id: String { rawValue }
 
     var title: String {
@@ -3346,6 +3525,8 @@ enum TipTopic: String, CaseIterable, Identifiable {
         case .notes: return L("Ghi chú", "Notes")
         case .timer: return L("Hẹn giờ", "Timer")
         case .system: return L("Hệ thống", "System")
+        case .tools: return L("Công cụ", "Tools")
+        case .translate: return L("Dịch", "Translate")
         case .alerts: return L("Thông báo", "Alerts")
         }
     }
@@ -3359,6 +3540,8 @@ enum TipTopic: String, CaseIterable, Identifiable {
         case .notes: return Tab.notes.symbol
         case .timer: return Tab.timer.symbol
         case .system: return Tab.system.symbol
+        case .tools: return Tab.tools.symbol
+        case .translate: return Tab.translate.symbol
         case .alerts: return "bell.badge"
         }
     }
@@ -3371,6 +3554,8 @@ enum TipTopic: String, CaseIterable, Identifiable {
         case .notes: self = .notes
         case .timer: self = .timer
         case .system: self = .system
+        case .tools: self = .tools
+        case .translate: self = .translate
         }
     }
 
@@ -3382,8 +3567,12 @@ enum TipTopic: String, CaseIterable, Identifiable {
                                   "Hover over the notch to open it, move away to close. On Macs without a notch, hover the middle of the top edge.")),
             ("tray.and.arrow.down", L("Kéo file thả lên tai thỏ là mở ngay Kệ file.",
                                      "Drop a file on the notch to open the file shelf.")),
-            ("keyboard", L("⌥⌘N để ẩn / hiện RinNotch. Esc để thu tai thỏ lại.",
-                          "⌥⌘N hides / shows RinNotch. Esc closes the notch.")),
+            ("keyboard", L("⌃⌘1 → ⌃⌘8 mở thẳng từng mục (8 là Dịch nhanh), bấm lại đúng phím đó để đóng. Đang mở thì bấm số 1–8 để chuyển mục.",
+                          "⌃⌘1 → ⌃⌘8 open each section (8 is Translate); press it again to close. While open, press 1–8 to switch.")),
+            ("hand.point.up.left", L("Cài đặt → Cách mở tai thỏ: Rê chuột, Phím tắt hoặc Cả hai. Đổi từng phím tắt cũng ở đó.",
+                                    "Settings → How to open: Hover, Shortcut or Both. You can change each shortcut there too.")),
+            ("eye.slash", L("⌥⌘N để ẩn / hiện RinNotch. Esc để thu tai thỏ lại.",
+                           "⌥⌘N hides / shows RinNotch. Esc closes the notch.")),
             ("menubar.rectangle", L("Biểu tượng RinNotch trên thanh menu: Cài đặt, Mở mục, Kiểm tra cập nhật, Báo lỗi.",
                                    "The RinNotch menu bar icon has Settings, Open, Check for Updates and Report a Bug.")),
             ("questionmark.circle", L("Nút ? trên tai thỏ mở mẹo của mục đang xem. Trái tim là Ủng hộ tác giả.",
@@ -3412,16 +3601,22 @@ enum TipTopic: String, CaseIterable, Identifiable {
                          "⌘-click adds or removes a file, ⇧-click selects a range. Click empty space to deselect.")),
             ("cursorarrow.click.2", L("Bấm đúp để mở. Chuột phải: Mở, AirDrop, Sao chép, Hiện trong Finder, Chọn tất cả, Bỏ khỏi kệ.",
                                      "Double-click to open. Right-click: Open, AirDrop, Copy, Show in Finder, Select All, Remove.")),
-            ("square.and.arrow.up", L("Nút AirDrop và Sao chép làm trên file đang chọn, chưa chọn file nào thì làm cả kệ.",
-                              "The AirDrop and Copy buttons use the selection, or the whole shelf when nothing is selected.")),
+            ("square.and.arrow.up", L("Nút AirDrop, Sao chép, Xử lý làm trên file đang chọn, chưa chọn file nào thì làm cả kệ.",
+                              "AirDrop, Copy and Process use the selection, or the whole shelf when nothing is selected.")),
+            ("wand.and.stars", L("Xử lý: đổi ảnh sang JPG / PNG / HEIC, nén ảnh, thu nhỏ, xoá nền, gộp PDF, nén ZIP. File mới nằm cạnh file gốc, file gốc giữ nguyên.",
+                                "Process: convert images to JPG / PNG / HEIC, compress, resize, remove background, merge into a PDF, ZIP. New files sit next to the originals.")),
         ]
         case .clipboard: return [
-            ("doc.on.clipboard", L("Giữ 20 thứ bạn copy gần nhất. Bấm một dòng để copy lại.",
-                                  "Keeps the last 20 things you copied. Click a row to copy it again.")),
-            ("lock", L("Mật khẩu copy từ trình quản lý mật khẩu không được lưu.",
-                      "Passwords copied from password managers are not saved.")),
-            ("memorychip", L("Chỉ giữ trong bộ nhớ: thoát app là xoá hết. Nút Xoá hết để xoá ngay.",
-                            "Kept in memory only: quitting the app clears it. Clear All removes everything now.")),
+            ("doc.on.clipboard", L("Giữ những thứ bạn copy gần nhất, kèm app đã copy. Bấm một dòng để chép lại. Mở bằng ⌃⌘3 thì dùng ↑ ↓ và ↩.",
+                                  "Keeps what you copied recently, with the app it came from. Click a row to copy it again. Opened with ⌃⌘3, use ↑ ↓ and ↩.")),
+            ("magnifyingglass", L("Gõ để tìm, không cần dấu. Lọc bằng @link @image @color @code @file hoặc @tên-app (vd @safari).",
+                                 "Type to search. Filter with @link @image @color @code @file or @app-name (e.g. @safari).")),
+            ("pin", L("Bấm ghim để giữ lại lâu dài, xem ở Đã ghim. Mục đã ghim còn nguyên khi tắt app.",
+                     "Pin items to keep them; see them under Pinned. Pinned items survive quitting.")),
+            ("contextualmenu.and.cursorarrow", L("Chuột phải: sửa nhanh chữ (viết hoa, bỏ dấu, bỏ dòng trống…), chép mã màu dạng HEX / RGB / HSL, mở liên kết, dịch.",
+                                                "Right-click: quick text fixes (case, remove accents, blank lines…), copy colors as HEX / RGB / HSL, open links, translate.")),
+            ("lock", L("Mật khẩu copy từ trình quản lý mật khẩu không được lưu. Thêm app không muốn ghi trong Cài đặt.",
+                      "Passwords from password managers are never saved. Add apps to ignore in Settings.")),
         ]
         case .notes: return [
             ("return", L("Enter để xuống dòng như bình thường.", "Enter adds a new line.")),
@@ -3440,6 +3635,26 @@ enum TipTopic: String, CaseIterable, Identifiable {
             ("bell", L("Hết giờ đếm ngược thì có thông báo thả xuống kèm tiếng chuông.",
                       "When a countdown ends, an alert drops down with a chime.")),
         ]
+        case .tools: return [
+            ("eyedropper.halffull", L("Lấy mã màu: bấm rồi chọn điểm bất kỳ trên màn hình, mã HEX được chép ngay.",
+                                     "Pick color: click, then choose any point on screen; the HEX code is copied.")),
+            ("cup.and.saucer", L("Giữ máy thức 15 phút tới 4 giờ, hoặc tới khi tắt. Tự tắt khi pin dưới 10% hoặc khi gập máy (đổi trong Cài đặt).",
+                                "Keep awake for 15 minutes to 4 hours, or until turned off. Stops below 10% battery or when the Mac sleeps.")),
+            ("keyboard", L("Lau bàn phím: khoá mọi phím 2 phút. Bấm Esc 5 lần hoặc nút Mở khoá để mở sớm. Cần quyền Trợ năng.",
+                          "Clean keyboard: locks all keys for 2 minutes. Press Esc 5 times or Unlock to end early. Needs Accessibility.")),
+            ("exclamationmark.triangle", L("Nút nguồn / Touch ID không khoá được, đừng ấn mạnh vào đó khi lau.",
+                                          "The power / Touch ID button can't be locked; go easy on it while cleaning.")),
+        ]
+        case .translate: return [
+            ("character.cursor.ibeam", L("Bôi đen chữ ở app bất kỳ rồi bấm ⌃⌘8: tai thỏ hiện bản dịch. Chữ Việt dịch sang Anh, chữ khác dịch sang Việt.",
+                                        "Select text in any app and press ⌃⌘8. Vietnamese goes to English, everything else to Vietnamese.")),
+            ("arrow.left.arrow.right", L("Thay chỗ chọn: đưa bản dịch vào đúng chỗ vừa bôi đen. Sao chép: chép bản dịch.",
+                                        "Replace: puts the translation where your selection was. Copy: copies it.")),
+            ("hand.raised", L("Đọc chữ đang bôi đen cần quyền Trợ năng: Cài đặt hệ thống → Quyền riêng tư & Bảo mật → Trợ năng → RinNotch.",
+                             "Reading the selection needs Accessibility: System Settings → Privacy & Security → Accessibility → RinNotch.")),
+            ("globe", L("Dịch bằng bộ dịch có sẵn của Mac, trên máy (macOS 15+). Lần đầu có thể cần tải gói ngôn ngữ ở Cài đặt → Chung → Ngôn ngữ & Vùng → Ngôn ngữ dịch.",
+                       "Uses the Mac's built-in translator on-device (macOS 15+). You may need to download languages in Settings → General → Language & Region → Translation Languages.")),
+        ]
         case .system: return [
             ("gauge.with.dots.needle.33percent", L("Xem CPU, RAM, tốc độ mạng, mức nhiệt và pin.",
                                                   "Shows CPU, memory, network speed, thermal state and battery.")),
@@ -3451,6 +3666,8 @@ enum TipTopic: String, CaseIterable, Identifiable {
                             "Bluetooth headphones: shows the model and battery (AirPods show each bud and the case).")),
             ("bolt.fill", L("Cắm và rút sạc, pin yếu 20% và 10% đều có thông báo thả xuống.",
                            "Plugging in, unplugging, and low battery at 20% and 10% all drop down an alert.")),
+            ("wifi.slash", L("Mất mạng hơn vài giây thì báo, có mạng lại cũng báo. Wi-Fi chập chờn chốc lát thì không báo.",
+                            "Losing the internet for more than a few seconds drops an alert, and so does getting it back.")),
             ("waveform", L("App đang ghi âm (Ghi âm, QuickTime…) thì tai thỏ hiện sóng âm và thời gian. Sóng âm cần quyền micro.",
                           "When an app records audio (Voice Memos, QuickTime…), the notch shows a waveform and time. The waveform needs mic access.")),
             ("switch.2", L("Bật / tắt từng loại trong Cài đặt.", "Turn each one on or off in Settings.")),
@@ -3479,7 +3696,7 @@ struct TipsView: View {
                             Image(systemName: t.symbol).font(.system(size: 15, weight: .semibold))
                             Text(t.title).font(.system(size: 10, weight: .medium)).lineLimit(1).minimumScaleFactor(0.8)
                         }
-                        .frame(width: 54, height: 46)
+                        .frame(width: 56, height: 46)
                         .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
                             .fill(topic == t ? Color.accentColor.opacity(0.22) : Color.primary.opacity(0.05)))
                         .foregroundStyle(topic == t ? Color.accentColor : Color.primary.opacity(0.75))
@@ -3511,7 +3728,7 @@ struct TipsView: View {
                    "Open again anytime: RinNotch menu bar icon → Tips, or the ? button in the notch."))
                 .noteText().multilineTextAlignment(.center)
         }
-        .panelStyle(width: 540)
+        .panelStyle(width: 700)
     }
 }
 
@@ -4119,13 +4336,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MediaHub.shared = MediaHub(model: model)
         MediaWatcher.shared = MediaWatcher(model: model)
         AppMusicBridge.shared = AppMusicBridge()
-        HotKey.register()
+        NetworkWatcher.shared = NetworkWatcher(model: model)
+        KeepAwake.shared.setup(model: model)
+        KeyboardLock.shared.model = model
+        NotificationCenter.default.addObserver(forName: .rinHotkeysChanged, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.rebuildMenu() }
+        }
         setupStatusItem()
+        HotkeyCenter.registerAll()
         setupUpdater()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         MediaWatcher.shared?.stop()
+        KeyboardLock.shared.unlock()
+        KeepAwake.shared.stop(.quit, silent: true)
+    }
+
+    /// Phím tắt toàn hệ thống vừa được bấm.
+    func perform(_ a: HotAction) {
+        switch a {
+        case .toggleHidden:
+            toggleHidden()
+        case .translate:
+            TranslateModel.shared.startFromHotkey()
+        default:
+            guard let t = a.tab else { return }
+            if model.hidden { toggleHidden() }
+            if model.expanded && model.tab == t {
+                controller.collapse()
+            } else {
+                controller.expand(tab: t, byKeyboard: true)
+            }
+        }
     }
 
     // MARK: Cập nhật
@@ -4191,8 +4434,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(.separator())
         }
         let hide = item(model.hidden ? L("Hiện RinNotch", "Show RinNotch") : L("Ẩn RinNotch", "Hide RinNotch"),
-                        #selector(toggleHiddenAction), key: "n")
-        hide.keyEquivalentModifierMask = [.command, .option]
+                        #selector(toggleHiddenAction))
+        showKey(hide, .toggleHidden)
         menu.addItem(hide)
 
         let open = NSMenuItem(title: L("Mở mục", "Open"), action: nil, keyEquivalent: "")
@@ -4201,6 +4444,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let i = item(t.title, #selector(openTab(_:)))
             i.image = NSImage(systemSymbolName: t.symbol, accessibilityDescription: nil)
             i.representedObject = t.rawValue
+            if let a = HotAction(rawValue: t.rawValue) { showKey(i, a) }
             sub.addItem(i)
         }
         open.submenu = sub
@@ -4219,6 +4463,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let quit = NSMenuItem(title: L("Thoát RinNotch", "Quit RinNotch"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quit)
         statusItem.menu = menu
+    }
+
+    /// Hiện phím tắt cạnh dòng menu (phím thật do hệ thống bắt).
+    private func showKey(_ i: NSMenuItem, _ a: HotAction) {
+        guard let (key, mods) = HotkeyCenter.menuKey(a) else { return }
+        i.keyEquivalent = key
+        i.keyEquivalentModifierMask = mods
     }
 
     func toggleHidden() {
