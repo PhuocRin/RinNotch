@@ -155,6 +155,10 @@ final class KeyboardLock {
             if let t = tap { CGEvent.tapEnable(tap: t, enable: true) }
             return false
         }
+        // Sự kiện hệ thống: chỉ chặn phím âm lượng / độ sáng / nhạc (subtype 8), nút chuột phụ thì cho qua.
+        if type.rawValue == 14 {
+            return NSEvent(cgEvent: event)?.subtype.rawValue == 8
+        }
         if type == .keyDown, event.getIntegerValueField(.keyboardEventKeycode) == Int64(kVK_Escape),
            event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
             let now = Date()
@@ -209,6 +213,7 @@ final class NetworkWatcher {
     private var pending: DispatchWorkItem?
     private var lastWake = Date.distantPast
     private var wakeObserver: NSObjectProtocol?
+    private var sleepObserver: NSObjectProtocol?
 
     init(model: NotchModel) {
         m = model
@@ -223,6 +228,24 @@ final class NetworkWatcher {
             forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { _ in
             MainActor.assumeIsolated { NetworkWatcher.shared?.lastWake = Date() }
         }
+        // Máy ngủ thì huỷ báo đang chờ: đồng hồ dừng lúc ngủ nên báo sẽ bật ngay khi mở máy, lúc Wi-Fi chưa kịp nối.
+        sleepObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { NetworkWatcher.shared?.pending?.cancel() }
+        }
+    }
+
+    private func recheckLater() {
+        let w = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.online == false else { return }
+                self.shownOffline = true
+                Diag.log("Mất kết nối mạng")
+                if Prefs.showNetwork { self.m.showTransient(.offline, seconds: 5) }
+            }
+        }
+        pending = w
+        DispatchQueue.main.asyncAfter(deadline: .now() + 15, execute: w)
     }
 
     private func update(_ ok: Bool) {
@@ -236,6 +259,11 @@ final class NetworkWatcher {
             let w = DispatchWorkItem { [weak self] in
                 MainActor.assumeIsolated {
                     guard let self, self.online == false else { return }
+                    guard Date().timeIntervalSince(self.lastWake) >= 20 else {
+                        // Vừa mở máy: đợi Wi-Fi thêm rồi mới xét.
+                        self.recheckLater()
+                        return
+                    }
                     self.shownOffline = true
                     Diag.log("Mất kết nối mạng")
                     if Prefs.showNetwork { self.m.showTransient(.offline, seconds: 5) }

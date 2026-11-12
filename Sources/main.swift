@@ -445,11 +445,15 @@ struct CompactView: View {
         } else if m.musicCompact {
             MusicBars().frame(width: 18, height: 18)
         } else if m.awakeCompact {
-            TimelineView(.periodic(from: .now, by: 30)) { ctx in
-                Text(m.keepAwakeUntil.map { "\(max(Int($0.timeIntervalSince(ctx.date) / 60 + 0.99), 1))p" } ?? "∞")
-                    .font(.system(size: 11, weight: .semibold))
-                    .monospacedDigit()
-                    .foregroundStyle(Color.teal)
+            if let until = m.keepAwakeUntil {
+                TimelineView(.periodic(from: .now, by: 30)) { ctx in
+                    Text("\(max(Int(until.timeIntervalSince(ctx.date) / 60 + 0.99), 1))p")
+                        .font(.system(size: 11, weight: .semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(Color.teal)
+                }
+            } else {
+                Text("∞").font(.system(size: 13, weight: .semibold)).foregroundStyle(Color.teal)
             }
         }
     }
@@ -2843,19 +2847,20 @@ final class NotchController {
 
     /// Phím bấm khi tai thỏ đang được gõ: Esc thu lại, số 1–8 chuyển mục, ↑ ↓ ↩ chọn trong Bộ nhớ tạm.
     private func keyDown(_ e: NSEvent) -> Bool {
-        guard model.expanded else { return false }
+        guard model.expanded, e.window === panel else { return false }
         if e.keyCode == UInt16(kVK_Escape) {
             collapse()
             return true
         }
-        // Đang gõ chữ (ghi chú, ô tìm, ô dịch) thì để phím tới ô chữ.
-        if panel.firstResponder is NSTextView { return false }
         let mods = e.modifierFlags.intersection([.command, .control, .option, .shift])
         guard mods.isEmpty else { return false }
-        if let ch = e.charactersIgnoringModifiers, let n = Int(ch), n >= 1, n <= Tab.allCases.count {
+        let typing = panel.firstResponder is NSTextView
+        // Đang gõ chữ (ghi chú, ô tìm, ô dịch) thì số để tới ô chữ; riêng ô tìm của Bộ nhớ tạm vẫn dùng được ↑ ↓ ↩.
+        if !typing, let ch = e.charactersIgnoringModifiers, let n = Int(ch), n >= 1, n <= Tab.allCases.count {
             model.tab = Tab.allCases[n - 1]
             return true
         }
+        if typing && model.tab != .clipboard { return false }
         if model.tab == .clipboard {
             let items = model.visibleClips
             guard !items.isEmpty else { return false }
@@ -2944,6 +2949,15 @@ final class NotchController {
             model.clipSelection = nil
             // Nhận phím ngay (gõ ghi chú, số chuyển mục) mà không giành focus của app đang dùng.
             panel.makeKey()
+            // SwiftUI có thể tự đặt con trỏ vào ô chữ đầu tiên (ô tìm): bỏ ra để bấm số chuyển mục được.
+            if model.tab != .notes {
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated {
+                        guard let self, self.model.tab != .notes, self.panel.firstResponder is NSTextView else { return }
+                        _ = self.panel.makeFirstResponder(nil)
+                    }
+                }
+            }
         }
         guard !model.expanded else { return }
         model.expanded = true
@@ -2990,6 +3004,10 @@ final class NotchController {
         panel.ignoresMouseEvents = model.keyboardLockUntil == nil
         if panel.isKeyWindow {
             _ = panel.makeFirstResponder(nil)
+            // Trả phím về app đang dùng: ẩn rồi hiện lại panel là cách chắc chắn để panel thôi nhận phím
+            // (gọi activate() cho app đang đứng trước có thể bị macOS bỏ qua).
+            panel.orderOut(nil)
+            if !model.hidden { panel.orderFrontRegardless() }
             NSWorkspace.shared.frontmostApplication?.activate()
         }
     }
@@ -3345,8 +3363,8 @@ struct SettingsView: View {
                         .frame(width: 170)
                     }
                     Toggle(L("Xem trước tên trang của liên kết", "Show link titles"), isOn: $linkPreview)
-                    Text(L("Bật thì RinNotch mở trang của liên kết vừa chép để lấy tên trang. Lịch sử chỉ nằm trong máy, thoát app là xoá; mục đã ghim thì được giữ lại.",
-                           "When on, RinNotch loads copied links to read the page title. History stays on this Mac and clears when you quit; pinned items are kept."))
+                    Text(L("Bật thì RinNotch mở trang của liên kết vừa chép để lấy tên trang. Link có mã riêng (đăng nhập, đặt lại mật khẩu, huỷ đăng ký…) được bỏ qua. Lịch sử chỉ nằm trong máy, thoát app là xoá; mục đã ghim thì được giữ lại.",
+                           "When on, RinNotch loads copied links to read the page title. Links with tokens (login, password reset, unsubscribe…) are skipped. History stays on this Mac and clears when you quit; pinned items are kept."))
                         .noteText()
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {

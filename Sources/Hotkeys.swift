@@ -254,6 +254,9 @@ struct KeyRecorder: View {
         }
         .onAppear { refresh() }
         .onDisappear { stop() }
+        // Chuyển sang app khác hay đóng Cài đặt giữa chừng thì thôi ghi, trả phím tắt lại như cũ.
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { _ in stop() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in stop() }
         .onReceive(NotificationCenter.default.publisher(for: .rinHotkeysChanged)) { _ in refresh() }
     }
 
@@ -266,7 +269,10 @@ struct KeyRecorder: View {
         note = nil
         recording = true
         HotkeyCenter.suspend(true)
+        let window = NSApp.keyWindow
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { e in
+            // Chỉ nhận phím bấm trong cửa sổ Cài đặt, phím ở cửa sổ khác của RinNotch để yên.
+            guard window == nil || e.window === window else { return e }
             handle(e)
             return nil
         }

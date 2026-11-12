@@ -409,10 +409,14 @@ enum ClipStore {
         return item
     }
 
+    /// File ghim đọc không được lúc mở app: không dọn ảnh, tránh xoá mất ảnh của mục ghim cũ.
+    private static var loadFailed = false
+
     static func savePins(_ pins: [ClipItem]) {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let stored = pins.compactMap { encode($0, inlineImage: false) }
         if let data = try? JSONEncoder().encode(stored) { try? data.write(to: pinsFile, options: .atomic) }
+        guard !loadFailed else { return }
         // Dọn ảnh của mục đã bỏ ghim.
         let keep = Set(stored.compactMap(\.imageFile))
         if let files = try? FileManager.default.contentsOfDirectory(atPath: imagesDir.path) {
@@ -421,7 +425,15 @@ enum ClipStore {
     }
 
     static func loadPins() -> [ClipItem] {
-        guard let data = try? Data(contentsOf: pinsFile), let list = try? JSONDecoder().decode([StoredClip].self, from: data) else { return [] }
+        guard let data = try? Data(contentsOf: pinsFile) else { return [] }
+        guard let list = try? JSONDecoder().decode([StoredClip].self, from: data) else {
+            // Giữ lại file hỏng để còn cứu, không ghi đè.
+            loadFailed = true
+            let bad = dir.appendingPathComponent("pins.bad-\(Int(Date().timeIntervalSince1970)).json")
+            try? FileManager.default.moveItem(at: pinsFile, to: bad)
+            Diag.log("File ghim đọc không được, đã đổi tên thành \(bad.lastPathComponent)")
+            return []
+        }
         return list.compactMap(decode)
     }
 
@@ -589,8 +601,20 @@ final class ClipboardWatcher {
 
     func clearHistory() { m.clips.removeAll() }
 
+    /// Link có mã riêng (đăng nhập một lần, đặt lại mật khẩu, huỷ đăng ký…) mà mở thử là có thể mất hiệu lực
+    /// hoặc làm luôn việc đó: không mở.
+    static func safeToPreview(_ url: URL) -> Bool {
+        guard url.query == nil, url.fragment == nil else { return false }
+        let path = url.path.lowercased()
+        let risky = ["login", "signin", "sign-in", "logout", "verify", "confirm", "activate", "reset", "password",
+                     "token", "auth", "magic", "unsubscribe", "invite", "approve", "otp", "callback", "redirect"]
+        if risky.contains(where: { path.contains($0) }) { return false }
+        // Đoạn đường dẫn dài như mã ngẫu nhiên.
+        return !url.pathComponents.contains { $0.count >= 24 && $0.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" } }
+    }
+
     private func fetchTitle(_ item: ClipItem) {
-        guard Prefs.linkPreview, let text = item.text, let url = ClipParse.link(text) else { return }
+        guard Prefs.linkPreview, let text = item.text, let url = ClipParse.link(text), Self.safeToPreview(url) else { return }
         let id = item.id
         let provider = LPMetadataProvider()
         provider.timeout = 8

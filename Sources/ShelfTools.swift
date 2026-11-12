@@ -266,12 +266,42 @@ enum ShelfTools {
         let name = files.count == 1 ? first.lastPathComponent : "RinNotch \(files.count) file"
         let out = outputURL(for: first.deletingLastPathComponent().appendingPathComponent(name + ".zip"), suffix: "", ext: "zip")
         // Gom theo thư mục cha để giữ đúng cấu trúc thư mục con trong file nén.
-        let groups = Dictionary(grouping: files, by: { $0.deletingLastPathComponent().path })
+        var groups = Dictionary(grouping: files, by: { $0.deletingLastPathComponent().path }).map { ($0.key, $0.value) }
+        var staging: URL?
+        defer { if let staging { try? FileManager.default.removeItem(at: staging) } }
+        // Hai file trùng tên ở hai thư mục khác nhau: đặt lối tắt tên riêng trong thư mục tạm,
+        // không thì file sau đè file trước trong file nén.
+        let names = files.map(\.lastPathComponent)
+        if Set(names).count != names.count {
+            let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("rinnotch-zip-\(UUID().uuidString)")
+            do { try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true) } catch { return ([], "Không nén được") }
+            staging = tmp
+            var used = Set<String>()
+            var links: [URL] = []
+            for f in files {
+                let ext = f.pathExtension
+                let base = f.deletingPathExtension().lastPathComponent
+                var name = f.lastPathComponent
+                var i = 2
+                while used.contains(name) {
+                    name = ext.isEmpty ? "\(base) \(i)" : "\(base) \(i).\(ext)"
+                    i += 1
+                }
+                used.insert(name)
+                let link = tmp.appendingPathComponent(name)
+                do { try FileManager.default.createSymbolicLink(at: link, withDestinationURL: f) } catch { return ([], "Không nén được") }
+                links.append(link)
+            }
+            groups = [(tmp.path, links)]
+        }
         for (dir, items) in groups {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
             p.currentDirectoryURL = URL(fileURLWithPath: dir)
-            p.arguments = ["-r", "-q", "-y", out.path] + items.map(\.lastPathComponent) + ["-x", "*.DS_Store", "-x", "__MACOSX/*"]
+            // "./tên" để tên bắt đầu bằng "-" không bị hiểu là tuỳ chọn. Thư mục tạm thì phải đi theo lối tắt (bỏ -y).
+            let follow = staging == nil ? ["-y"] : []
+            p.arguments = ["-r", "-q"] + follow + [out.path] + items.map { "./" + $0.lastPathComponent }
+                + ["-x", "*.DS_Store", "-x", "*/__MACOSX/*"]
             p.standardOutput = FileHandle.nullDevice
             p.standardError = FileHandle.nullDevice
             do { try p.run() } catch { return ([], "Không nén được") }

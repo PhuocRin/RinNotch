@@ -35,17 +35,46 @@ enum Selection {
         let pb = NSPasteboard.general
         let saved = snapshot(pb)
         let before = pb.changeCount
-        ClipboardWatcher.shared?.pause(seconds: 1.5)
-        postKey(kVK_ANSI_C, flags: .maskCommand)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+        ClipboardWatcher.shared?.pause(seconds: 3)
+        // Đợi buông ⌃⌘ của phím Dịch nhanh, không thì app nhận thành ⌃⌘C.
+        waitForModifiersUp(tries: 30) {
+            postKey(kVK_ANSI_C, flags: .maskCommand)
+            poll(pb, before: before, saved: saved, tries: 24, done: done)
+        }
+    }
+
+    private static func waitForModifiersUp(tries: Int, then: @escaping @MainActor () -> Void) {
+        let held = CGEventSource.flagsState(.combinedSessionState)
+            .intersection([.maskCommand, .maskControl, .maskAlternate, .maskShift])
+        if held.isEmpty || tries <= 0 { then(); return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
+            MainActor.assumeIsolated { waitForModifiersUp(tries: tries - 1, then: then) }
+        }
+    }
+
+    /// Hỏi bộ nhớ tạm mỗi 50 ms, tối đa khoảng 1,2 giây (app chậm như Chrome, Electron chép trễ).
+    private static func poll(_ pb: NSPasteboard, before: Int, saved: [[NSPasteboard.PasteboardType: Data]],
+                             tries: Int, done: @escaping @MainActor (String?) -> Void) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
             MainActor.assumeIsolated {
-                var text: String?
                 if pb.changeCount != before {
-                    text = pb.string(forType: .string)
+                    let text = pb.string(forType: .string)
                     restore(pb, saved)
                     ClipboardWatcher.shared?.ignore(pb.changeCount)
+                    done(text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? text : nil)
+                } else if tries > 0 {
+                    poll(pb, before: before, saved: saved, tries: tries - 1, done: done)
+                } else {
+                    done(nil)
+                    // Phòng app chép quá trễ: vẫn trả bộ nhớ tạm cũ nếu nó đổi trong 1,5 giây sau đó.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                        MainActor.assumeIsolated {
+                            guard pb.changeCount != before else { return }
+                            restore(pb, saved)
+                            ClipboardWatcher.shared?.ignore(pb.changeCount)
+                        }
+                    }
                 }
-                done(text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? text : nil)
             }
         }
     }
@@ -149,9 +178,9 @@ final class TranslateModel: ObservableObject {
         }
         if m.hidden { AppDelegate.shared?.toggleHidden() }
         guard Access.trusted else {
+            // Không tự bật hộp thoại xin quyền (nó làm tai thỏ đóng ngay): hiện thẻ hướng dẫn kèm nút.
             needsPermission = true
             replace = .none
-            Access.prompt()
             ctrl.expand(tab: .translate, byKeyboard: true)
             return
         }
@@ -241,6 +270,7 @@ final class TranslateModel: ObservableObject {
 
     func finish(_ text: String) {
         busy = false
+        status = nil
         output = text
     }
 
@@ -283,6 +313,13 @@ final class TranslateModel: ObservableObject {
         ClipboardWatcher.shared?.ignore(pb.changeCount)
         AppDelegate.shared?.controller.collapse()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            // Tai thỏ còn giữ phím thì ⌘V sẽ rơi vào RinNotch: thôi, để bản dịch trong bộ nhớ tạm cho người dùng tự dán.
+            if MainActor.assumeIsolated({ AppDelegate.shared?.controller.panel.isKeyWindow ?? false }) {
+                MainActor.assumeIsolated {
+                    ClipboardWatcher.shared?.copyText(TranslateModel.shared.output, source: "RinNotch · Dịch nhanh")
+                }
+                return
+            }
             Selection.postKey(kVK_ANSI_V, flags: .maskCommand)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
                 MainActor.assumeIsolated {
@@ -325,20 +362,46 @@ struct TranslationRunner: View {
         Color.clear
             .frame(width: 1, height: 1)
             .translationTask(config) { session in
-                let text = await MainActor.run { t.input }
+                let (text, rid, src, tgt) = await MainActor.run {
+                    (t.input, t.requestID, t.sourceCode.map { Locale.Language(identifier: $0) }, Locale.Language(identifier: t.targetCode))
+                }
+                // Kiểm gói ngôn ngữ trước: chưa tải thì chỉ đường, không để macOS bật hộp thoại tải
+                // (hộp thoại đó không hiện tốt trong tai thỏ và làm tai thỏ đóng giữa chừng).
+                let availability = LanguageAvailability()
+                let status: LanguageAvailability.Status
+                if let src {
+                    status = await availability.status(from: src, to: tgt)
+                } else {
+                    status = (try? await availability.status(for: text, to: tgt)) ?? .supported
+                }
+                switch status {
+                case .installed:
+                    break
+                case .supported:
+                    await MainActor.run {
+                        guard t.requestID == rid else { return }
+                        t.fail("Máy chưa tải gói \(TargetLanguage.name(t.sourceCode)) → \(TargetLanguage.name(t.targetCode)). Tải ở Cài đặt hệ thống → Chung → Ngôn ngữ & Vùng → Ngôn ngữ dịch, xong bấm Dịch.", languageHelp: true)
+                    }
+                    return
+                default:
+                    await MainActor.run {
+                        guard t.requestID == rid else { return }
+                        t.fail("Bộ dịch của Mac chưa hỗ trợ cặp ngôn ngữ này.")
+                    }
+                    return
+                }
                 do {
                     let r = try await session.translate(text)
-                    await MainActor.run { t.finish(r.targetText) }
-                } catch {
-                    let msg = "\(error)".lowercased()
                     await MainActor.run {
-                        if msg.contains("notinstalled") || msg.contains("not installed") || msg.contains("unable to") {
-                            t.fail("Máy chưa có gói ngôn ngữ để dịch. Tải ở Cài đặt hệ thống → Chung → Ngôn ngữ & Vùng → Ngôn ngữ dịch.", languageHelp: true)
-                        } else if msg.contains("unsupported") {
-                            t.fail("Bộ dịch của Mac chưa hỗ trợ cặp ngôn ngữ này.")
-                        } else {
-                            t.fail("Chưa dịch được. Thử lại, hoặc tải gói ngôn ngữ ở Cài đặt hệ thống → Chung → Ngôn ngữ & Vùng → Ngôn ngữ dịch.", languageHelp: true)
-                        }
+                        guard t.requestID == rid else { return }
+                        t.finish(r.targetText)
+                    }
+                } catch is CancellationError {
+                    // Đã có yêu cầu dịch mới thay chỗ, bỏ qua.
+                } catch {
+                    await MainActor.run {
+                        guard t.requestID == rid else { return }
+                        t.fail("Chưa dịch được. Thử lại, hoặc kiểm gói ngôn ngữ ở Cài đặt hệ thống → Chung → Ngôn ngữ & Vùng → Ngôn ngữ dịch.", languageHelp: true)
                     }
                 }
             }
@@ -399,6 +462,8 @@ struct TranslateView: View {
                 HStack(spacing: 8) {
                     Button("Mở Cài đặt Trợ năng") {
                         AppDelegate.shared?.controller.collapse()
+                        // Gọi xin quyền một lần để RinNotch có tên trong danh sách Trợ năng.
+                        Access.prompt()
                         Access.openSettings()
                     }
                     .buttonStyle(PillButton(prominent: true))
