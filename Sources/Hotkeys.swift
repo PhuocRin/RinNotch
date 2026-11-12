@@ -90,7 +90,7 @@ struct KeyCombo: Equatable {
 
 /// Việc mà một phím tắt làm. Thứ tự này cũng là số id đăng ký với hệ thống.
 enum HotAction: String, CaseIterable, Identifiable {
-    case toggleHidden, media, shelf, clipboard, notes, timer, system, tools, translate
+    case toggleHidden, media, shelf, clipboard, notes, timer, system, tools, translate, library
     var id: String { rawValue }
 
     var tab: Tab? { Tab(rawValue: rawValue) }
@@ -99,6 +99,7 @@ enum HotAction: String, CaseIterable, Identifiable {
         switch self {
         case .toggleHidden: return L("Ẩn / hiện RinNotch", "Hide / show RinNotch")
         case .translate: return L("Dịch nhanh chữ đang bôi đen", "Translate selected text")
+        case .library: return L("Mở bảng lớn (Bộ nhớ tạm, Kệ file)", "Open the big board")
         default: return L("Mở ", "Open ") + (tab?.title ?? "")
         }
     }
@@ -109,6 +110,9 @@ enum HotAction: String, CaseIterable, Identifiable {
     var defaultCombo: KeyCombo? {
         if self == .toggleHidden {
             return KeyCombo(keyCode: UInt32(kVK_ANSI_N), mods: UInt32(cmdKey | optionKey), label: "N")
+        }
+        if self == .library {
+            return KeyCombo(keyCode: UInt32(kVK_ANSI_0), mods: UInt32(controlKey | cmdKey), label: "0")
         }
         guard let t = tab, let i = Tab.allCases.firstIndex(of: t), i < Self.digitCodes.count else { return nil }
         return KeyCombo(keyCode: UInt32(Self.digitCodes[i]), mods: UInt32(controlKey | cmdKey), label: "\(i + 1)")

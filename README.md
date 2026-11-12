@@ -8,6 +8,7 @@ Trang tải và hướng dẫn cài có hình: https://phuocrin.com/rinnotch/
 
 - **Nhạc / video**: ảnh bìa, tên bài, thanh thời lượng (bấm để tua), lùi / phát / tới. Đang phát thì hai bên tai thỏ hiện ảnh bìa và cột nhạc. App "Đang phát" của macOS bị dừng mà Apple Music hay Spotify vẫn chạy thì tự chuyển qua bài đó.
 - **Kệ file**: kéo file thả lên tai thỏ để giữ tạm, có ảnh xem trước. Kéo chuột trên chỗ trống để chọn nhiều file, ⌘/⇧ + bấm để chọn thêm, rồi kéo cả nhóm ra cùng lúc. Kéo ra = sao chép, giữ ⌘ khi kéo = chuyển file. Chuột phải: Mở, AirDrop, Sao chép, Hiện trong Finder, Chọn tất cả.
+- Bộ nhớ tạm và Kệ file hiện dạng thẻ có ảnh xem trước, lọc theo loại (Bộ nhớ tạm lọc được cả theo app đã copy), nút ⤢ mở bảng lớn. Mỗi lần copy có viên "Đã chép" hiện dưới tai thỏ, rê chuột vào để Ghim, Dịch, Xoá.
 - **Xử lý file trên kệ**: đổi ảnh sang JPG / PNG / HEIC, nén ảnh, thu nhỏ (3840, 1920, 1280 px hoặc một nửa), xoá nền ra PNG trong suốt, gộp ảnh và PDF thành một file PDF, nén ZIP. File mới nằm cạnh file gốc, file gốc giữ nguyên.
 - **Bộ nhớ tạm**: giữ 20 tới 200 mục gần nhất kèm app đã copy, bấm để chép lại. Tìm không cần dấu, lọc bằng @link @image @color @code @file hoặc @tên-app. Ghim để giữ lâu dài (còn sau khi thoát app). Nhận ra mã màu (hiện ô màu, chép dạng HEX / RGB / HSL), link, code (tô màu). Chuột phải để sửa nhanh chữ: viết hoa, bỏ dấu tiếng Việt, bỏ khoảng trắng / dòng trống, nối dòng, sắp xếp, xoá dòng trùng. Sao lưu và nhập trong Cài đặt. Bỏ qua mật khẩu và các app bạn chọn.
 - **Công cụ**: lấy mã màu ở bất kỳ điểm nào trên màn hình; giữ máy thức 15 phút tới 4 giờ hoặc tới khi tắt (tự tắt khi pin dưới 10% hay gập máy); khoá bàn phím 2 phút để lau (Esc 5 lần để mở sớm).
@@ -17,7 +18,7 @@ Trang tải và hướng dẫn cài có hình: https://phuocrin.com/rinnotch/
 - **Hệ thống**: CPU, RAM, tốc độ mạng, mức nhiệt (chỉ đo khi mở mục này).
 - **Thông báo thả xuống**: tai nghe kết nối (kèm % pin AirPods, icon đúng mẫu), cắm / rút sạc, pin yếu 20% và 10%, mất mạng và có mạng lại.
 - **Ghi âm**: app nào đang dùng micro thì hiện icon app, thời gian cộng dồn qua các lần tạm dừng và sóng âm.
-- **Phím tắt**: ⌃⌘1 → ⌃⌘8 mở thẳng Nhạc, Kệ file, Bộ nhớ tạm, Ghi chú, Hẹn giờ, Hệ thống, Công cụ, Dịch nhanh (bấm lại để đóng). Tai thỏ đang mở thì bấm số 1–8 để chuyển mục. ⌥⌘N ẩn / hiện, Esc thu lại. Đổi hoặc tắt từng phím trong Cài đặt. Bộ ⌃⌘ + số được chọn vì không trùng phím của Final Cut Pro và phím mặc định của macOS.
+- **Phím tắt**: ⌃⌘1 → ⌃⌘8 mở thẳng Nhạc, Kệ file, Bộ nhớ tạm, Ghi chú, Hẹn giờ, Hệ thống, Công cụ, Dịch nhanh (bấm lại để đóng). Tai thỏ đang mở thì bấm số 1–8 để chuyển mục. ⌃⌘0 mở bảng lớn chứa hết Bộ nhớ tạm và Kệ file. ⌥⌘N ẩn / hiện, Esc thu lại. Đổi hoặc tắt từng phím trong Cài đặt. Bộ ⌃⌘ + số được chọn vì không trùng phím của Final Cut Pro và phím mặc định của macOS.
 - **Cài đặt**: cách mở tai thỏ (rê chuột, phím tắt hoặc cả hai), bật / tắt từng loại hiển thị, chọn mục mở khi rê chuột, mở cùng máy.
 - **Mẹo dùng**: tự mở một lần khi cài, mở lại từ thanh menu → Mẹo dùng hoặc nút ? trên tai thỏ (mở đúng mục đang xem).
 - Tự cập nhật (gói cập nhật được ký số, kiểm tra trước khi cài), Báo lỗi kèm nhật ký, Ủng hộ tác giả.

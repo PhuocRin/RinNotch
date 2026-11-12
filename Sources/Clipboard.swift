@@ -635,7 +635,9 @@ final class ClipboardWatcher {
 extension NotchModel {
     var visibleClips: [ClipItem] {
         let base = clipFilter == .pinned ? pins : clips
-        return base.filter { (clipCategory == nil || $0.category == clipCategory) && $0.matches(clipSearch) }
+        return base.filter {
+            (clipCategory == nil || $0.category == clipCategory) && (clipApp == nil || $0.sourceID == clipApp) && $0.matches(clipSearch)
+        }
     }
 }
 
@@ -692,22 +694,20 @@ struct ClipboardView: View {
                 .background(Capsule().fill(Color.white.opacity(0.09)))
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 5) {
-                        chip("Tất cả", count: m.clips.count, on: m.clipFilter == .recent && m.clipCategory == nil, symbol: "square.grid.2x2") {
-                            m.clipFilter = .recent; m.clipCategory = nil
-                        }
-                        chip("Ghim", count: m.pins.count, on: m.clipFilter == .pinned, symbol: "pin.fill") {
-                            m.clipFilter = .pinned; m.clipCategory = nil
-                        }
-                        ForEach(ClipCategory.allCases, id: \.self) { c in
-                            let n = m.clips.filter { $0.category == c }.count
-                            if n > 0 {
-                                chip(c.title, count: n, on: m.clipFilter == .recent && m.clipCategory == c, symbol: c.symbol) {
-                                    m.clipFilter = .recent; m.clipCategory = c
-                                }
-                            }
-                        }
+                        ClipChips(m: m)
                     }
                 }
+                Button {
+                    AppDelegate.shared?.showLibrary(.clipboard)
+                } label: {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 11, weight: .bold))
+                        .frame(width: 26, height: 26)
+                        .background(Circle().fill(Color.white.opacity(0.09)))
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .help("Mở bảng lớn (\(HotkeyCenter.combo(.library)?.display ?? "⌃⌘0"))")
             }
             if items.isEmpty {
                 VStack(spacing: 5) {
@@ -746,7 +746,7 @@ struct ClipboardView: View {
     }
 
     private var emptyTitle: String {
-        if !m.clipSearch.isEmpty || m.clipCategory != nil { return "Không có mục nào khớp" }
+        if !m.clipSearch.isEmpty || m.clipCategory != nil || m.clipApp != nil { return "Không có mục nào khớp" }
         return m.clipFilter == .pinned ? "Chưa ghim mục nào" : "Copy gì đó, nó sẽ hiện ở đây"
     }
 
@@ -754,6 +754,72 @@ struct ClipboardView: View {
         if !m.clipSearch.isEmpty { return "Thử bỏ dấu hoặc bớt từ khoá" }
         return m.clipFilter == .pinned ? "Bấm ghim trên thẻ, hoặc chuột phải → Ghim. Mục đã ghim vẫn còn khi tắt app."
                                        : "Mật khẩu copy từ trình quản lý mật khẩu sẽ không được lưu"
+    }
+
+}
+
+/// Hàng nút lọc: Tất cả, Ghim, từng loại, rồi từng app đã copy (icon + số mục).
+struct ClipChips: View {
+    @ObservedObject var m: NotchModel
+    var large = false
+
+    var body: some View {
+        chip("Tất cả", count: m.clips.count, on: m.clipFilter == .recent && m.clipCategory == nil && m.clipApp == nil, symbol: "square.grid.2x2") {
+            m.clipFilter = .recent; m.clipCategory = nil; m.clipApp = nil
+        }
+        chip("Ghim", count: m.pins.count, on: m.clipFilter == .pinned, symbol: "pin.fill") {
+            m.clipFilter = .pinned; m.clipCategory = nil; m.clipApp = nil
+        }
+        ForEach(ClipCategory.allCases, id: \.self) { c in
+            let n = m.clips.filter { $0.category == c }.count
+            if n > 0 {
+                chip(c.title, count: n, on: m.clipCategory == c, symbol: c.symbol) {
+                    m.clipFilter = .recent
+                    m.clipCategory = m.clipCategory == c ? nil : c
+                }
+            }
+        }
+        let apps = appCounts
+        if !apps.isEmpty {
+            Rectangle().fill(Color.white.opacity(0.15)).frame(width: 1, height: 16).padding(.horizontal, 2)
+            ForEach(apps, id: \.id) { a in
+                Button {
+                    m.clipSelection = nil
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
+                        m.clipFilter = .recent
+                        m.clipApp = m.clipApp == a.id ? nil : a.id
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        if let icon = AppIcons.icon(a.id) {
+                            Image(nsImage: icon).resizable().frame(width: 15, height: 15)
+                        } else {
+                            Image(systemName: "app").font(.system(size: 11))
+                        }
+                        if large { Text(a.name).font(.system(size: 11, weight: .semibold)).lineLimit(1) }
+                        Text("\(a.count)").font(.system(size: 10, weight: .semibold)).monospacedDigit()
+                            .foregroundStyle(.white.opacity(m.clipApp == a.id ? 0.8 : 0.45))
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill(m.clipApp == a.id ? Color.white.opacity(0.24) : Color.white.opacity(0.07)))
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Chỉ hiện thứ chép từ \(a.name)")
+            }
+        }
+    }
+
+    private var appCounts: [(id: String, name: String, count: Int)] {
+        var counts: [String: (String, Int)] = [:]
+        for c in m.clips {
+            guard let id = c.sourceID else { continue }
+            counts[id, default: (c.sourceName ?? id, 0)].1 += 1
+        }
+        return counts.map { (id: $0.key, name: $0.value.0, count: $0.value.1) }
+            .sorted { $0.count != $1.count ? $0.count > $1.count : $0.name < $1.name }
+            .prefix(large ? 20 : 8).map { $0 }
     }
 
     private func chip(_ title: String, count: Int, on: Bool, symbol: String, action: @escaping () -> Void) -> some View {
@@ -782,6 +848,9 @@ struct ClipCard: View {
     let item: ClipItem
     @ObservedObject var m: NotchModel
     var selected = false
+    /// Cỡ thẻ: nhỏ trên tai thỏ, lớn hơn trong bảng lớn.
+    var w: CGFloat = ClipCard.width
+    var h: CGFloat = ClipCard.height
     @State private var hover = false
 
     var body: some View {
@@ -792,7 +861,7 @@ struct ClipCard: View {
         } label: {
             ZStack(alignment: .bottom) {
                 content
-                    .frame(width: Self.width, height: Self.height, alignment: .topLeading)
+                    .frame(width: w, height: h, alignment: .topLeading)
                 footer(pinned: pinned)
                 if flash {
                     ZStack {
@@ -804,7 +873,7 @@ struct ClipCard: View {
                     .transition(.opacity)
                 }
             }
-            .frame(width: Self.width, height: Self.height)
+            .frame(width: w, height: h)
             .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 13, style: .continuous)
@@ -825,7 +894,7 @@ struct ClipCard: View {
         switch item.kind {
         case .image(let img):
             Image(nsImage: img).resizable().aspectRatio(contentMode: .fill)
-                .frame(width: Self.width, height: Self.height).clipped()
+                .frame(width: w, height: h).clipped()
         case .files(let urls):
             VStack(spacing: 6) {
                 FileThumb(url: urls[0]).frame(width: 60, height: 46)

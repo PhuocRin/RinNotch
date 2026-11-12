@@ -181,6 +181,9 @@ final class NotchModel: ObservableObject {
     @Published var pins: [ClipItem] = []
     @Published var clipFilter: ClipFilter = .recent
     @Published var clipCategory: ClipCategory?
+    @Published var clipApp: String?
+    @Published var shelfKind: ShelfKind?
+    @Published var libraryTab: LibraryTab = .clipboard
     @Published var clipSearch = ""
     @Published var clipSelection: UUID?
     @Published var clipFlash: UUID?
@@ -337,7 +340,7 @@ struct IslandView: View {
         case .idle: return CGSize(width: m.notchWidth, height: m.notchHeight)
         case .compact: return CGSize(width: m.notchWidth + (m.recording == nil && !m.timerCompact ? 130 : 210), height: m.notchHeight)
         case .banner: return CGSize(width: max(m.notchWidth + 170, m.keyboardLockUntil != nil ? 490 : 420), height: m.notchHeight + 78)
-        case .expanded: return CGSize(width: NotchController.expandedWidth, height: m.notchHeight + 224)
+        case .expanded: return CGSize(width: NotchController.expandedWidth, height: m.notchHeight + NotchController.expandedHeight)
         }
     }
 
@@ -1414,7 +1417,7 @@ struct ShelfView: View {
                 marquee = r
                 var sel = marqueeBase
                 if r.width > 2 || r.height > 2 {
-                    for (i, u) in m.shelf.enumerated() where itemRect(i).intersects(r) { sel.insert(u) }
+                    for (i, u) in m.visibleShelf.enumerated() where itemRect(i).intersects(r) { sel.insert(u) }
                 }
                 if sel != m.shelfSelection { m.shelfSelection = sel }
             }
@@ -1441,11 +1444,28 @@ struct ShelfView: View {
                 )
         } else {
             let sel = m.selectedShelf
+            let list = m.visibleShelf
             VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 5) { ShelfChips(m: m) }
+                    }
+                    Button {
+                        AppDelegate.shared?.showLibrary(.shelf)
+                    } label: {
+                        Image(systemName: "arrow.up.left.and.arrow.down.right")
+                            .font(.system(size: 11, weight: .bold))
+                            .frame(width: 26, height: 26)
+                            .background(Circle().fill(Color.white.opacity(0.09)))
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Mở bảng lớn (\(HotkeyCenter.combo(.library)?.display ?? "⌃⌘0"))")
+                }
                 GeometryReader { geo in
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 10) {
-                            ForEach(m.shelf, id: \.self) { url in
+                            ForEach(list, id: \.self) { url in
                                 ShelfItem(url: url, m: m, selected: m.shelfSelection.contains(url))
                             }
                         }
@@ -1470,7 +1490,8 @@ struct ShelfView: View {
                         .coordinateSpace(name: "shelfRow")
                     }
                 }
-                .frame(height: ShelfItem.height + Self.rowPad * 2 + 6)
+                .frame(height: ShelfItem.height + Self.rowPad * 2)
+                .animation(.spring(response: 0.32, dampingFraction: 0.85), value: list)
                 HStack(spacing: 8) {
                     if m.shelfBusy {
                         ProgressView().controlSize(.mini)
@@ -1480,9 +1501,9 @@ struct ShelfView: View {
                         .font(.system(size: 11)).foregroundStyle(m.shelfStatus != nil ? Color.green.opacity(0.9) : .white.opacity(0.55))
                         .lineLimit(1)
                     Spacer(minLength: 4)
-                    Button("AirDrop") { Actions.airDrop(sel.isEmpty ? m.shelf : sel) }.buttonStyle(PillButton(prominent: true))
-                    Button("Sao chép") { Actions.copyFiles(sel.isEmpty ? m.shelf : sel) }.buttonStyle(PillButton())
-                    let targets = sel.isEmpty ? m.shelf : sel
+                    let targets = sel.isEmpty ? list : sel
+                    Button("AirDrop") { Actions.airDrop(targets) }.buttonStyle(PillButton(prominent: true))
+                    Button("Sao chép") { Actions.copyFiles(targets) }.buttonStyle(PillButton())
                     Menu {
                         ForEach(ShelfTools.ops(for: targets), id: \.self) { op in
                             Button(op.title) { ShelfTools.run(op, on: targets, m: m) }
@@ -1495,7 +1516,7 @@ struct ShelfView: View {
                     .fixedSize()
                     .padding(.horizontal, 10).padding(.vertical, 5)
                     .background(Capsule().fill(Color.white.opacity(0.12)))
-                    .disabled(m.shelfBusy)
+                    .disabled(m.shelfBusy || targets.isEmpty)
                     .help("Đổi định dạng, nén, thu nhỏ, xoá nền ảnh · gộp PDF · nén ZIP")
                     if sel.isEmpty {
                         Button("Xoá kệ") { m.clearShelf() }.buttonStyle(PillButton())
@@ -1509,27 +1530,52 @@ struct ShelfView: View {
 }
 
 struct ShelfItem: View {
-    static let width: CGFloat = 92
-    static let height: CGFloat = 82
+    static let width: CGFloat = 138
+    static let height: CGFloat = 108
 
     let url: URL
     @ObservedObject var m: NotchModel
     var selected = false
+    var w: CGFloat = ShelfItem.width
+    var h: CGFloat = ShelfItem.height
 
     var body: some View {
         let exists = FileManager.default.fileExists(atPath: url.path)
-        VStack(spacing: 5) {
-            FileThumb(url: url)
-                .frame(width: 64, height: 50)
-            Text(exists ? url.lastPathComponent : "File không còn")
-                .font(.system(size: 10, weight: .medium))
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .frame(width: 78)
+        let kind = ShelfKind.of(url)
+        ZStack(alignment: .bottom) {
+            FileCardThumb(url: url, size: CGSize(width: w, height: h))
+            HStack(spacing: 5) {
+                Image(systemName: kind.symbol).font(.system(size: 9, weight: .semibold)).foregroundStyle(.white.opacity(0.6))
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(exists ? url.lastPathComponent : "File không còn")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Text(FileInfo.size(url)).font(.system(size: 9)).foregroundStyle(.white.opacity(0.5))
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 7)
+            .padding(.vertical, 4)
+            .background(.ultraThinMaterial)
+            .environment(\.colorScheme, .dark)
         }
-        .frame(width: Self.width, height: Self.height)
-        .background(RoundedRectangle(cornerRadius: 12).fill(selected ? Color.accentColor.opacity(0.35) : Color.white.opacity(0.07)))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.accentColor.opacity(selected ? 0.95 : 0), lineWidth: 1.5))
+        .frame(width: w, height: h)
+        .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                .strokeBorder(selected ? Color.accentColor : Color.white.opacity(0.1), lineWidth: selected ? 2 : 1)
+        )
+        .overlay(alignment: .topTrailing) {
+            if selected {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 15))
+                    .foregroundStyle(.white, Color.accentColor)
+                    .padding(6)
+                    .transition(.scale.combined(with: .opacity))
+            }
+        }
+        .animation(.spring(response: 0.25, dampingFraction: 0.8), value: selected)
         .opacity(exists ? 1 : 0.45)
         .overlay(FileDragArea(url: url, m: m))
         .help(url.path)
@@ -2793,6 +2839,7 @@ final class NotchPanel: NSPanel {
 @MainActor
 final class NotchController {
     static let expandedWidth: CGFloat = 640
+    static let expandedHeight: CGFloat = 246
     let model: NotchModel
     let panel: NotchPanel
     private var geo = NotchGeometry.current()
@@ -2883,7 +2930,7 @@ final class NotchController {
     private var expandedRect: CGRect {
         let f = geo.screenFrame
         let w: CGFloat = NotchController.expandedWidth + 16 + 40
-        let h = geo.height + 224 + 30
+        let h = geo.height + NotchController.expandedHeight + 30
         return CGRect(x: f.midX - w / 2, y: f.maxY - h, width: w, height: h)
     }
 
@@ -3632,8 +3679,8 @@ enum TipTopic: String, CaseIterable, Identifiable {
                                   "Hover over the notch to open it, move away to close. On Macs without a notch, hover the middle of the top edge.")),
             ("tray.and.arrow.down", L("Kéo file thả lên tai thỏ là mở ngay Kệ file.",
                                      "Drop a file on the notch to open the file shelf.")),
-            ("keyboard", L("⌃⌘1 → ⌃⌘8 mở thẳng từng mục (8 là Dịch nhanh), bấm lại đúng phím đó để đóng. Đang mở thì bấm số 1–8 để chuyển mục.",
-                          "⌃⌘1 → ⌃⌘8 open each section (8 is Translate); press it again to close. While open, press 1–8 to switch.")),
+            ("keyboard", L("⌃⌘1 → ⌃⌘8 mở thẳng từng mục (8 là Dịch nhanh), bấm lại đúng phím đó để đóng. Đang mở thì bấm số 1–8 để chuyển mục. ⌃⌘0 mở bảng lớn.",
+                          "⌃⌘1 → ⌃⌘8 open each section (8 is Translate); press it again to close. While open, press 1–8 to switch. ⌃⌘0 opens the big board.")),
             ("hand.point.up.left", L("Cài đặt → Cách mở tai thỏ: Rê chuột, Phím tắt hoặc Cả hai. Đổi từng phím tắt cũng ở đó.",
                                     "Settings → How to open: Hover, Shortcut or Both. You can change each shortcut there too.")),
             ("eye.slash", L("⌥⌘N để ẩn / hiện RinNotch. Esc để thu tai thỏ lại.",
@@ -3668,6 +3715,8 @@ enum TipTopic: String, CaseIterable, Identifiable {
                                      "Double-click to open. Right-click: Open, AirDrop, Copy, Show in Finder, Select All, Remove.")),
             ("square.and.arrow.up", L("Nút AirDrop, Sao chép, Xử lý làm trên file đang chọn, chưa chọn file nào thì làm cả kệ.",
                               "AirDrop, Copy and Process use the selection, or the whole shelf when nothing is selected.")),
+            ("square.grid.2x2", L("File hiện thành thẻ có ảnh xem trước. Lọc theo Ảnh, Video, PDF, Tài liệu, Thư mục ở hàng trên. Nút ⤢ (hoặc ⌃⌘0) mở bảng lớn chứa hết.",
+                                 "Files show as preview cards. Filter by Images, Videos, PDFs, Documents, Folders. The ⤢ button (or ⌃⌘0) opens the big board.")),
             ("wand.and.stars", L("Xử lý: đổi ảnh sang JPG / PNG / HEIC, nén ảnh, thu nhỏ, xoá nền, gộp PDF, nén ZIP. File mới nằm cạnh file gốc, file gốc giữ nguyên.",
                                 "Process: convert images to JPG / PNG / HEIC, compress, resize, remove background, merge into a PDF, ZIP. New files sit next to the originals.")),
         ]
@@ -3676,8 +3725,10 @@ enum TipTopic: String, CaseIterable, Identifiable {
                                   "What you copy shows as cards: images, colors, code and links at a glance. Click a card to copy it again. Opened with ⌃⌘3, use ← → and ↩.")),
             ("checkmark.circle", L("Mỗi lần copy, viên \"Đã chép\" hiện dưới tai thỏ. Rê chuột vào để Ghim, Dịch hoặc Xoá ngay. Tắt trong Cài đặt nếu thấy rối.",
                                   "Each copy shows a \"Copied\" pill below the notch. Hover it to Pin, Translate or Delete. Turn it off in Settings.")),
-            ("magnifyingglass", L("Gõ để tìm, không cần dấu. Lọc bằng @link @image @color @code @file hoặc @tên-app (vd @safari).",
-                                 "Type to search. Filter with @link @image @color @code @file or @app-name (e.g. @safari).")),
+            ("magnifyingglass", L("Gõ để tìm, không cần dấu. Hàng nút trên lọc theo loại (Link, Code, Ảnh, Màu…) và theo app đã copy (icon app). Gõ @safari cũng lọc theo app.",
+                                 "Type to search. The chips filter by type (Link, Code, Image, Color…) and by the app you copied from. Typing @safari works too.")),
+            ("arrow.up.left.and.arrow.down.right", L("Nút ⤢ hoặc ⌃⌘0 mở bảng lớn: một cửa sổ chứa hết Bộ nhớ tạm và Kệ file, chỉnh được cỡ.",
+                                                    "The ⤢ button or ⌃⌘0 opens the big board: a resizable window with all your clipboard items and shelf files.")),
             ("pin", L("Bấm ghim để giữ lại lâu dài, xem ở Đã ghim. Mục đã ghim còn nguyên khi tắt app.",
                      "Pin items to keep them; see them under Pinned. Pinned items survive quitting.")),
             ("contextualmenu.and.cursorarrow", L("Chuột phải: sửa nhanh chữ (viết hoa, bỏ dấu, bỏ dòng trống…), chép mã màu dạng HEX / RGB / HSL, mở liên kết, dịch.",
@@ -4428,6 +4479,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             toggleHidden()
         case .translate:
             TranslateModel.shared.startFromHotkey()
+        case .library:
+            if LibraryWindow.shared.isFrontmost { LibraryWindow.shared.close() } else { showLibrary(model.libraryTab) }
         default:
             guard let t = a.tab else { return }
             if model.hidden { toggleHidden() }
@@ -4517,6 +4570,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         open.submenu = sub
         menu.addItem(open)
+        let lib = item(L("Mở bảng lớn…", "Open Big Board…"), #selector(showLibraryAction))
+        showKey(lib, .library)
+        menu.addItem(lib)
         menu.addItem(.separator())
 
         menu.addItem(item(L("Cài đặt…", "Settings…"), #selector(showSettings), key: ","))
@@ -4554,6 +4610,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func showSettings() { settingsPanel.show() }
+
+    /// Bảng lớn: cửa sổ chứa hết Bộ nhớ tạm và Kệ file.
+    func showLibrary(_ tab: LibraryTab) {
+        controller.collapse()
+        model.libraryTab = tab
+        LibraryWindow.shared.show(model)
+    }
+    @objc func showLibraryAction() { showLibrary(model.libraryTab) }
     @objc func showAbout() { aboutPanel.show() }
     @objc func showSupport() { supportPanel.show() }
     @objc func showTipsAction() { showTips(.start) }
