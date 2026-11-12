@@ -670,7 +670,7 @@ struct ClipboardView: View {
                             }
                         }
                     }
-                    .onChange(of: m.clipSelection) { id in
+                    .onChange(of: m.clipSelection) { _, id in
                         if let id { withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id) } }
                     }
                 }

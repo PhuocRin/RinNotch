@@ -342,7 +342,7 @@ struct TranslationRunner: View {
                     }
                 }
             }
-            .onChange(of: t.requestID) { _ in run() }
+            .onChange(of: t.requestID) { run() }
             .onAppear { if t.busy { run() } }
     }
 
@@ -452,7 +452,7 @@ struct TranslateView: View {
                     .labelsHidden()
                     .controlSize(.small)
                     .frame(maxWidth: 190, alignment: .leading)
-                    .onChange(of: t.target) { _ in t.translate() }
+                    .onChange(of: t.target) { t.translate() }
                     ZStack(alignment: .topLeading) {
                         ScrollView(.vertical, showsIndicators: false) {
                             Text(t.output.isEmpty ? " " : t.output)

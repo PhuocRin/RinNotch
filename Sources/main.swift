@@ -3291,7 +3291,7 @@ struct SettingsView: View {
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
-                    .onChange(of: openMode) { _ in HotkeyCenter.registerAll() }
+                    .onChange(of: openMode) { HotkeyCenter.registerAll() }
                     Text(openModeNote).noteText()
                     if openMode != OpenMode.hotkey.rawValue {
                         HStack {
@@ -3395,7 +3395,7 @@ struct SettingsView: View {
 
                 section(L("Chung", "General")) {
                     Toggle(L("Mở cùng máy", "Open at login"), isOn: $login)
-                        .onChange(of: login) { on in
+                        .onChange(of: login) { _, on in
                             do {
                                 if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
                             } catch {
@@ -4285,7 +4285,7 @@ struct UpdateView: View {
                     ForEach(UpdateFrequency.allCases, id: \.self) { f in Text(f.title).tag(f) }
                 }
                 .pickerStyle(.segmented).labelsHidden()
-                .onChange(of: frequency) { _ in updater.checkIfDue() }
+                .onChange(of: frequency) { updater.checkIfDue() }
             }
             VStack(spacing: 6) {
                 Text(L("Khi có bản mới", "When an update is available")).font(.system(size: 12, weight: .semibold))
