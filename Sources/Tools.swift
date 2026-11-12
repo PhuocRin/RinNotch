@@ -80,6 +80,13 @@ enum EditMenu {
         edit.addItem(withTitle: L("Chọn tất cả", "Select All"), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         editItem.submenu = edit
         main.addItem(editItem)
+
+        let windowItem = NSMenuItem()
+        let win = NSMenu(title: L("Cửa sổ", "Window"))
+        win.addItem(withTitle: L("Đóng", "Close"), action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        win.addItem(withTitle: L("Thu nhỏ", "Minimize"), action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        windowItem.submenu = win
+        main.addItem(windowItem)
         NSApp.mainMenu = main
     }
 }

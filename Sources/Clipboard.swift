@@ -714,6 +714,19 @@ struct ClipboardView: View {
                         ClipChips(m: m)
                     }
                 }
+                if m.clipFilter == .recent && !m.clips.isEmpty {
+                    Button {
+                        ClipboardWatcher.shared?.clearHistory()
+                    } label: {
+                        Image(systemName: "trash")
+                            .font(.system(size: 11, weight: .bold))
+                            .frame(width: 26, height: 26)
+                            .background(Circle().fill(Color.white.opacity(0.09)))
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Xoá lịch sử (mục đã ghim vẫn giữ)")
+                }
                 Button {
                     AppDelegate.shared?.showLibrary(.clipboard)
                 } label: {
@@ -737,26 +750,21 @@ struct ClipboardView: View {
             } else {
                 ScrollViewReader { proxy in
                     ScrollView(.horizontal, showsIndicators: false) {
-                        LazyHStack(spacing: 8) {
+                        LazyHStack(spacing: 10) {
                             ForEach(items) { item in
                                 ClipCard(item: item, m: m, selected: m.clipSelection == item.id).id(item.id)
                             }
                         }
-                        .padding(.horizontal, 1)
+                        // Chừa chỗ để thẻ phóng lên khi rê chuột mà không bị cắt trên dưới.
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 8)
                     }
                     .onChange(of: m.clipSelection) { _, id in
                         if let id { withAnimation(.easeOut(duration: 0.18)) { proxy.scrollTo(id, anchor: .center) } }
                     }
                 }
-                .frame(height: ClipCard.height)
-            }
-            HStack {
-                Text("Bấm thẻ để chép · chuột phải: ghim, sửa chữ, mã màu, dịch · ← → ↩ khi mở bằng phím")
-                    .font(.system(size: 10.5)).foregroundStyle(.white.opacity(0.45)).lineLimit(1)
-                Spacer(minLength: 6)
-                if m.clipFilter == .recent && !m.clips.isEmpty {
-                    Button("Xoá lịch sử") { ClipboardWatcher.shared?.clearHistory() }.buttonStyle(PillButton())
-                }
+                .frame(height: ClipCard.height + 16)
+                .help("Bấm thẻ để chép · chuột phải: ghim, đặt tên, sửa chữ, mã màu, dịch · mở bằng ⌃⌘3 thì dùng ← → ↩")
             }
         }
         .animation(.spring(response: 0.32, dampingFraction: 0.85), value: items.map(\.id))
@@ -860,7 +868,7 @@ struct ClipChips: View {
 
 struct ClipCard: View {
     static let width: CGFloat = 138
-    static let height: CGFloat = 108
+    static let height: CGFloat = 120
 
     let item: ClipItem
     @ObservedObject var m: NotchModel

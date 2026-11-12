@@ -1413,7 +1413,8 @@ struct ShelfView: View {
     @State private var marquee: CGRect?
     @State private var marqueeBase: Set<URL> = []
 
-    static let rowPad: CGFloat = 4
+    /// Chừa chỗ quanh hàng thẻ để thẻ phóng lên khi rê chuột không bị cắt.
+    static let rowPad: CGFloat = 6
 
     /// Vị trí từng ô file trong hàng: mỗi ô rộng cố định nên tính thẳng, không cần đo.
     private func itemRect(_ i: Int) -> CGRect {
@@ -1463,7 +1464,7 @@ struct ShelfView: View {
         } else {
             let sel = m.selectedShelf
             let list = m.visibleShelf
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 5) { ShelfChips(m: m) }
@@ -1549,7 +1550,7 @@ struct ShelfView: View {
 
 struct ShelfItem: View {
     static let width: CGFloat = 138
-    static let height: CGFloat = 108
+    static let height: CGFloat = 104
 
     let url: URL
     @ObservedObject var m: NotchModel
@@ -1584,13 +1585,22 @@ struct ShelfItem: View {
             RoundedRectangle(cornerRadius: 13, style: .continuous)
                 .strokeBorder(selected ? Color.accentColor : Color.white.opacity(m.shelfHover == url ? 0.28 : 0.1), lineWidth: selected ? 2 : 1)
         )
-        .overlay(alignment: .topTrailing) {
+        // Vòng chọn góc trái: bấm vào là thêm / bớt file đó khỏi vùng chọn (khỏi cần giữ ⌘).
+        .overlay(alignment: .topLeading) {
             if selected {
                 Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 15))
+                    .font(.system(size: 17))
                     .foregroundStyle(.white, Color.accentColor)
+                    .shadow(color: .black.opacity(0.4), radius: 2)
                     .padding(6)
                     .transition(.scale.combined(with: .opacity))
+            } else if m.shelfHover == url || !m.shelfSelection.isEmpty {
+                Circle()
+                    .fill(Color.black.opacity(0.35))
+                    .overlay(Circle().strokeBorder(Color.white.opacity(0.85), lineWidth: 1.5))
+                    .frame(width: 17, height: 17)
+                    .padding(6)
+                    .transition(.opacity)
             }
         }
         .scaleEffect(m.shelfHover == url ? 1.03 : 1)
@@ -1662,6 +1672,13 @@ final class FileDragNSView: NSView, NSDraggingSource {
         // Bấm rồi thả, không kéo: chọn file.
         guard downEvent != nil, let m = model else { downEvent = nil; return }
         downEvent = nil
+        let p = convert(event.locationInWindow, from: nil)
+        let inCircle = isFlipped ? (p.x < 32 && p.y < 32) : (p.x < 32 && p.y > bounds.height - 32)
+        if inCircle {
+            if m.shelfSelection.contains(url) { m.shelfSelection.remove(url) } else { m.shelfSelection.insert(url) }
+            m.shelfAnchor = url
+            return
+        }
         let mods = event.modifierFlags
         if mods.contains(.shift), let anchor = m.shelfAnchor,
            let a = m.shelf.firstIndex(of: anchor), let b = m.shelf.firstIndex(of: url) {
@@ -2989,8 +3006,12 @@ final class NotchController {
             return true
         }
         let mods = e.modifierFlags.intersection([.command, .control, .option, .shift])
-        guard mods.isEmpty else { return false }
         let typing = panel.firstResponder is NSTextView
+        if mods == .command, e.charactersIgnoringModifiers == "a", model.tab == .shelf, !typing {
+            model.shelfSelection = Set(model.visibleShelf)
+            return true
+        }
+        guard mods.isEmpty else { return false }
         // Đang gõ chữ (ghi chú, ô tìm, ô dịch) thì số để tới ô chữ; riêng ô tìm của Bộ nhớ tạm vẫn dùng được ↑ ↓ ↩.
         if !typing, let ch = e.charactersIgnoringModifiers, let n = Int(ch), n >= 1, n <= Tab.allCases.count {
             model.tab = Tab.allCases[n - 1]

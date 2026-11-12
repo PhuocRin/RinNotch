@@ -233,6 +233,8 @@ struct LibraryView: View {
     var body: some View {
         VStack(spacing: 12) {
             HStack(spacing: 8) {
+                // Chừa chỗ cho ba nút đỏ / vàng / xanh của cửa sổ.
+                Color.clear.frame(width: 62, height: 1)
                 ForEach(LibraryTab.allCases, id: \.self) { t in
                     Button {
                         withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) { m.libraryTab = t }
@@ -269,16 +271,6 @@ struct LibraryView: View {
                     .frame(maxWidth: 360)
                     .modifier(GlassCapsule())
                 }
-                Button {
-                    LibraryWindow.shared.close()
-                } label: {
-                    Image(systemName: "xmark").font(.system(size: 12, weight: .bold))
-                        .frame(width: 32, height: 32)
-                        .modifier(GlassCapsule())
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .help("Đóng (Esc)")
             }
             if m.libraryTab == .clipboard || m.libraryTab == .shelf {
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -298,9 +290,12 @@ struct LibraryView: View {
             .transition(.opacity.combined(with: .scale(scale: 0.98)))
             if m.libraryTab == .clipboard || m.libraryTab == .shelf { bottomBar }
         }
-        .padding(20)
+        .padding(.horizontal, 20)
+        .padding(.top, 14)
+        .padding(.bottom, 20)
         .frame(minWidth: 640, minHeight: 420)
-        .background(GlassBackdrop(radius: 28))
+        // Góc bo do cửa sổ quyết định (bo theo macOS); kính bo nhỏ hơn để không hở góc.
+        .background(GlassBackdrop(radius: 10))
         .foregroundStyle(.white)
         .environment(\.colorScheme, .dark)
         // Bung ra từ phía trên (như từ tai thỏ) thay vì hiện cái rụp.
@@ -439,7 +434,7 @@ final class LibraryPanel: NSPanel {
 }
 
 @MainActor
-final class LibraryWindow: NSObject {
+final class LibraryWindow: NSObject, NSWindowDelegate {
     static let shared = LibraryWindow()
     private var panel: LibraryPanel?
     private var closing = false
@@ -448,9 +443,15 @@ final class LibraryWindow: NSObject {
 
     func show(_ m: NotchModel) {
         if panel == nil {
+            // Có ba nút đỏ / vàng / xanh như cửa sổ thường (và ⌘W để đóng), thanh tiêu đề trong suốt
+            // để nền kính phủ kín cả cửa sổ.
             let p = LibraryPanel(contentRect: CGRect(x: 0, y: 0, width: 980, height: 640),
-                                 styleMask: [.borderless, .nonactivatingPanel, .resizable],
+                                 styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView, .nonactivatingPanel],
                                  backing: .buffered, defer: false)
+            p.titlebarAppearsTransparent = true
+            p.titleVisibility = .hidden
+            p.title = "RinNotch"
+            p.delegate = self
             p.isOpaque = false
             p.backgroundColor = .clear
             p.hasShadow = true
@@ -459,7 +460,7 @@ final class LibraryWindow: NSObject {
             p.hidesOnDeactivate = false
             p.isReleasedWhenClosed = false
             p.minSize = NSSize(width: 640, height: 420)
-            p.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
+            p.collectionBehavior = [.moveToActiveSpace, .fullScreenNone]
             p.appearance = NSAppearance(named: .darkAqua)
             let host = NSHostingView(rootView: LibraryView(m: m))
             host.wantsLayer = true
@@ -483,6 +484,12 @@ final class LibraryWindow: NSObject {
         guard let f = screen?.visibleFrame else { return }
         let w = min(max(f.width * 0.7, 760), 1280), h = min(max(f.height * 0.75, 480), 860)
         p.setFrame(CGRect(x: f.midX - w / 2, y: f.midY - h / 2, width: w, height: h), display: false)
+    }
+
+    /// Nút đỏ và ⌘W đi qua đây: chạy hiệu ứng thu lại rồi mới ẩn.
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        close()
+        return false
     }
 
     func close() {
