@@ -1420,6 +1420,8 @@ struct ShelfView: View {
     @ObservedObject var m: NotchModel
     /// Chừa chỗ quanh hàng thẻ để thẻ phóng lên khi rê chuột không bị cắt.
     static let rowPad: CGFloat = 6
+    /// Khung chọn dùng chung: kéo từ chỗ trống ở hàng nút lọc xuống hàng thẻ cũng được.
+    @StateObject private var marquee = MarqueeState()
 
     var body: some View {
         if m.shelf.isEmpty {
@@ -1440,9 +1442,18 @@ struct ShelfView: View {
             let sel = m.selectedShelf
             let list = m.visibleShelf
             VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 5) { ShelfChips(m: m) }
+                    // Đủ chỗ thì để hàng nút lọc bình thường: chỗ trống bên phải nhận kéo khung chọn.
+                    // Nhiều loại file quá thì mới cho cuộn ngang.
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 5) {
+                            ShelfChips(m: m)
+                            Spacer(minLength: 0)
+                        }
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 5) { ShelfChips(m: m) }
+                        }
                     }
                     Button {
                         AppDelegate.shared?.showLibrary(.shelf)
@@ -1460,17 +1471,19 @@ struct ShelfView: View {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 10) {
                             ForEach(list, id: \.self) { url in
-                                ShelfItem(url: url, m: m, selected: m.shelfSelection.contains(url), space: "shelfRow")
+                                ShelfItem(url: url, m: m, selected: m.shelfSelection.contains(url), space: "shelfArea")
                             }
                         }
                         .padding(Self.rowPad)
                         .frame(minWidth: geo.size.width, minHeight: geo.size.height, alignment: .topLeading)
                         // Kéo khung ở chỗ trống để chọn nhiều, bấm chỗ trống để bỏ chọn.
-                        .modifier(ShelfMarquee(m: m, space: "shelfRow"))
+                        .modifier(ShelfMarquee(m: m, space: "shelfArea", state: marquee, root: false))
                     }
                 }
                 .frame(height: ShelfItem.height + Self.rowPad * 2)
                 .animation(.spring(response: 0.32, dampingFraction: 0.85), value: list)
+                }
+                .modifier(ShelfMarquee(m: m, space: "shelfArea", state: marquee))
                 HStack(spacing: 8) {
                     if m.shelfBusy {
                         ProgressView().controlSize(.mini)

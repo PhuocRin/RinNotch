@@ -151,55 +151,66 @@ struct ShelfFrameKey: PreferenceKey {
     }
 }
 
+/// Trạng thái khung chọn, dùng chung giữa chỗ trống ở hàng trên và chỗ trống trong hàng thẻ.
+@MainActor
+final class MarqueeState: ObservableObject {
+    @Published var rect: CGRect?
+    var base: Set<URL> = []
+    var frames: [URL: CGRect] = [:]
+}
+
 /// Kéo khung ở chỗ trống để chọn nhiều file; giữ ⌘ hoặc ⇧ thì cộng thêm vào vùng chọn cũ.
-/// Bấm chỗ trống (không kéo) thì bỏ chọn.
+/// Bấm chỗ trống (không kéo) thì bỏ chọn. `root` = vùng ngoài cùng: đặt hệ toạ độ, vẽ khung, gom vị trí thẻ.
 struct ShelfMarquee: ViewModifier {
     @ObservedObject var m: NotchModel
     let space: String
-    @State private var frames: [URL: CGRect] = [:]
-    @State private var marquee: CGRect?
-    @State private var base: Set<URL> = []
+    @ObservedObject var state: MarqueeState
+    var root = true
 
     func body(content: Content) -> some View {
-        content
-            .background(
-                Color.white.opacity(0.001)
-                    .contentShape(Rectangle())
-                    .gesture(drag)
-            )
-            .overlay(alignment: .topLeading) {
-                if let r = marquee, r.width > 2 || r.height > 2 {
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(Color.accentColor.opacity(0.18))
-                        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color.accentColor.opacity(0.85), lineWidth: 1))
-                        .frame(width: r.width, height: r.height)
-                        .offset(x: r.minX, y: r.minY)
-                        .allowsHitTesting(false)
+        let caught = content.background(
+            Color.white.opacity(0.001)
+                .contentShape(Rectangle())
+                .gesture(drag)
+        )
+        if root {
+            caught
+                .overlay(alignment: .topLeading) {
+                    if let r = state.rect, r.width > 2 || r.height > 2 {
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(Color.accentColor.opacity(0.18))
+                            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color.accentColor.opacity(0.85), lineWidth: 1))
+                            .frame(width: r.width, height: r.height)
+                            .offset(x: r.minX, y: r.minY)
+                            .allowsHitTesting(false)
+                    }
                 }
-            }
-            .coordinateSpace(name: space)
-            .onPreferenceChange(ShelfFrameKey.self) { f in frames = f }
+                .coordinateSpace(name: space)
+                .onPreferenceChange(ShelfFrameKey.self) { f in state.frames = f }
+        } else {
+            caught
+        }
     }
 
     private var drag: some Gesture {
         DragGesture(minimumDistance: 0, coordinateSpace: .named(space))
             .onChanged { v in
-                if marquee == nil {
+                if state.rect == nil {
                     let mods = NSEvent.modifierFlags
-                    base = mods.contains(.command) || mods.contains(.shift) ? m.shelfSelection : []
+                    state.base = mods.contains(.command) || mods.contains(.shift) ? m.shelfSelection : []
                     m.marqueeActive = true
                 }
                 let r = CGRect(x: min(v.startLocation.x, v.location.x), y: min(v.startLocation.y, v.location.y),
                                width: abs(v.location.x - v.startLocation.x), height: abs(v.location.y - v.startLocation.y))
-                marquee = r
-                var sel = base
+                state.rect = r
+                var sel = state.base
                 if r.width > 2 || r.height > 2 {
-                    for (u, f) in frames where f.intersects(r) && m.shelf.contains(u) { sel.insert(u) }
+                    for (u, f) in state.frames where f.intersects(r) && m.shelf.contains(u) { sel.insert(u) }
                 }
                 if sel != m.shelfSelection { m.shelfSelection = sel }
             }
             .onEnded { _ in
-                marquee = nil
+                state.rect = nil
                 m.marqueeActive = false
             }
     }
@@ -289,6 +300,7 @@ struct GlassCapsule: ViewModifier {
 struct LibraryView: View {
     @ObservedObject var m: NotchModel
     @State private var shelfSearch = ""
+    @StateObject private var bigMarquee = MarqueeState()
 
     @State private var appeared = false
 
@@ -415,7 +427,7 @@ struct LibraryView: View {
                         .padding(8)
                         // Lưới phủ kín chiều cao để kéo khung ở chỗ trống bên dưới cũng được.
                         .frame(minHeight: geo.size.height, alignment: .top)
-                        .modifier(ShelfMarquee(m: m, space: "bigShelf"))
+                        .modifier(ShelfMarquee(m: m, space: "bigShelf", state: bigMarquee))
                     }
                 }
             }
