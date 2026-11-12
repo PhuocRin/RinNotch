@@ -143,6 +143,68 @@ enum ShelfRename {
     }
 }
 
+/// Vị trí từng thẻ file, để kéo khung chọn nhiều (hàng ngang trên tai thỏ lẫn lưới trong bảng lớn).
+struct ShelfFrameKey: PreferenceKey {
+    static var defaultValue: [URL: CGRect] { [:] }
+    static func reduce(value: inout [URL: CGRect], nextValue: () -> [URL: CGRect]) {
+        value.merge(nextValue()) { $1 }
+    }
+}
+
+/// Kéo khung ở chỗ trống để chọn nhiều file; giữ ⌘ hoặc ⇧ thì cộng thêm vào vùng chọn cũ.
+/// Bấm chỗ trống (không kéo) thì bỏ chọn.
+struct ShelfMarquee: ViewModifier {
+    @ObservedObject var m: NotchModel
+    let space: String
+    @State private var frames: [URL: CGRect] = [:]
+    @State private var marquee: CGRect?
+    @State private var base: Set<URL> = []
+
+    func body(content: Content) -> some View {
+        content
+            .background(
+                Color.white.opacity(0.001)
+                    .contentShape(Rectangle())
+                    .gesture(drag)
+            )
+            .overlay(alignment: .topLeading) {
+                if let r = marquee, r.width > 2 || r.height > 2 {
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color.accentColor.opacity(0.18))
+                        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color.accentColor.opacity(0.85), lineWidth: 1))
+                        .frame(width: r.width, height: r.height)
+                        .offset(x: r.minX, y: r.minY)
+                        .allowsHitTesting(false)
+                }
+            }
+            .coordinateSpace(name: space)
+            .onPreferenceChange(ShelfFrameKey.self) { f in frames = f }
+    }
+
+    private var drag: some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .named(space))
+            .onChanged { v in
+                if marquee == nil {
+                    let mods = NSEvent.modifierFlags
+                    base = mods.contains(.command) || mods.contains(.shift) ? m.shelfSelection : []
+                    m.marqueeActive = true
+                }
+                let r = CGRect(x: min(v.startLocation.x, v.location.x), y: min(v.startLocation.y, v.location.y),
+                               width: abs(v.location.x - v.startLocation.x), height: abs(v.location.y - v.startLocation.y))
+                marquee = r
+                var sel = base
+                if r.width > 2 || r.height > 2 {
+                    for (u, f) in frames where f.intersects(r) && m.shelf.contains(u) { sel.insert(u) }
+                }
+                if sel != m.shelfSelection { m.shelfSelection = sel }
+            }
+            .onEnded { _ in
+                marquee = nil
+                m.marqueeActive = false
+            }
+    }
+}
+
 enum FileInfo {
     static func size(_ u: URL) -> String {
         var isDir: ObjCBool = false
@@ -233,18 +295,17 @@ struct LibraryView: View {
     var body: some View {
         VStack(spacing: 12) {
             HStack(spacing: 8) {
-                // Chừa chỗ cho ba nút đỏ / vàng / xanh của cửa sổ.
-                Color.clear.frame(width: 62, height: 1)
                 ForEach(LibraryTab.allCases, id: \.self) { t in
                     Button {
                         withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) { m.libraryTab = t }
                     } label: {
                         HStack(spacing: 6) {
                             Image(systemName: t.symbol).font(.system(size: 13, weight: .semibold))
-                            Text(t.title).font(.system(size: 13, weight: .semibold))
+                            Text(t.title).font(.system(size: 13, weight: .semibold)).lineLimit(1)
                             if t == .clipboard { badge(m.clips.count) }
                             if t == .shelf { badge(m.shelf.count) }
                         }
+                        .fixedSize()
                         .padding(.horizontal, 14)
                         .padding(.vertical, 8)
                         .foregroundStyle(.white.opacity(m.libraryTab == t ? 1 : 0.7))
@@ -268,7 +329,7 @@ struct LibraryView: View {
                     .font(.system(size: 13))
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
-                    .frame(maxWidth: 360)
+                    .frame(minWidth: 160, maxWidth: 360)
                     .modifier(GlassCapsule())
                 }
             }
@@ -291,11 +352,12 @@ struct LibraryView: View {
             if m.libraryTab == .clipboard || m.libraryTab == .shelf { bottomBar }
         }
         .padding(.horizontal, 20)
-        .padding(.top, 14)
+        .padding(.top, 6)
         .padding(.bottom, 20)
-        .frame(minWidth: 640, minHeight: 420)
+        .frame(minWidth: 820, minHeight: 460)
+        // Kính phủ luôn thanh tiêu đề (hàng có ba nút đỏ / vàng / xanh) như cửa sổ thường.
         // Góc bo do cửa sổ quyết định (bo theo macOS); kính bo nhỏ hơn để không hở góc.
-        .background(GlassBackdrop(radius: 10))
+        .background(GlassBackdrop(radius: 10).ignoresSafeArea())
         .foregroundStyle(.white)
         .environment(\.colorScheme, .dark)
         // Bung ra từ phía trên (như từ tai thỏ) thay vì hiện cái rụp.
@@ -343,13 +405,18 @@ struct LibraryView: View {
             if files.isEmpty {
                 empty(symbol: "tray.and.arrow.down", text: m.shelf.isEmpty ? "Kéo file thả vào đây hoặc lên tai thỏ" : "Không có file nào khớp")
             } else {
-                ScrollView {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 186, maximum: 240), spacing: 12)], spacing: 12) {
-                        ForEach(files, id: \.self) { url in
-                            ShelfItem(url: url, m: m, selected: m.shelfSelection.contains(url), w: 186, h: 156)
+                GeometryReader { geo in
+                    ScrollView {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 186, maximum: 240), spacing: 12)], spacing: 12) {
+                            ForEach(files, id: \.self) { url in
+                                ShelfItem(url: url, m: m, selected: m.shelfSelection.contains(url), w: 186, h: 156, space: "bigShelf")
+                            }
                         }
+                        .padding(8)
+                        // Lưới phủ kín chiều cao để kéo khung ở chỗ trống bên dưới cũng được.
+                        .frame(minHeight: geo.size.height, alignment: .top)
+                        .modifier(ShelfMarquee(m: m, space: "bigShelf"))
                     }
-                    .padding(4)
                 }
             }
         }
@@ -449,8 +516,9 @@ final class LibraryWindow: NSObject, NSWindowDelegate {
                                  styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView, .nonactivatingPanel],
                                  backing: .buffered, defer: false)
             p.titlebarAppearsTransparent = true
-            p.titleVisibility = .hidden
-            p.title = "RinNotch"
+            // Hàng tiêu đề riêng như cửa sổ khác: ba nút bên trái, tên ở giữa.
+            p.titleVisibility = .visible
+            p.title = "RinNotch · Bảng lớn"
             p.delegate = self
             p.isOpaque = false
             p.backgroundColor = .clear
@@ -459,7 +527,7 @@ final class LibraryWindow: NSObject, NSWindowDelegate {
             p.isMovableByWindowBackground = true
             p.hidesOnDeactivate = false
             p.isReleasedWhenClosed = false
-            p.minSize = NSSize(width: 640, height: 420)
+            p.minSize = NSSize(width: 820, height: 460)
             p.collectionBehavior = [.moveToActiveSpace, .fullScreenNone]
             p.appearance = NSAppearance(named: .darkAqua)
             let host = NSHostingView(rootView: LibraryView(m: m))

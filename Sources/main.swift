@@ -1211,6 +1211,9 @@ final class SystemMonitor: ObservableObject {
     private var lastTicks: (busy: UInt64, total: UInt64)?
     private var lastNet: (rx: UInt64, tx: UInt64, at: Date)?
 
+    /// Đo luôn một lần lúc tạo để khung hình đầu tiên đã có số thật (RAM, pin, nhiệt).
+    init() { sample() }
+
     func start() {
         guard timer == nil else { return }
         sample()
@@ -1359,6 +1362,8 @@ struct RingTile: View {
     let detail: String
     let colors: [Color]
     var small = false
+    /// Lúc vừa mở mục Hệ thống: vẽ đúng số ngay, không cho vòng chạy từ 0 hay nhảy qua lại.
+    @State private var settled = false
 
     var body: some View {
         VStack(spacing: 6) {
@@ -1378,7 +1383,11 @@ struct RingTile: View {
                     .padding(.horizontal, 8)
             }
             .frame(width: 66, height: 66)
-            .animation(.spring(response: 0.6, dampingFraction: 0.85), value: value)
+            .animation(settled ? .spring(response: 0.6, dampingFraction: 0.85) : nil, value: value)
+            .transaction { if !settled { $0.animation = nil } }
+            .onAppear {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { settled = true }
+            }
             VStack(spacing: 1) {
                 Text(title).font(.system(size: 11, weight: .semibold))
                 Text(detail).font(.system(size: 9.5)).foregroundStyle(.white.opacity(0.45)).lineLimit(1)
@@ -1409,42 +1418,8 @@ struct Sparkline: Shape {
 
 struct ShelfView: View {
     @ObservedObject var m: NotchModel
-    /// Khung chọn đang kéo (toạ độ trong hàng file).
-    @State private var marquee: CGRect?
-    @State private var marqueeBase: Set<URL> = []
-
     /// Chừa chỗ quanh hàng thẻ để thẻ phóng lên khi rê chuột không bị cắt.
     static let rowPad: CGFloat = 6
-
-    /// Vị trí từng ô file trong hàng: mỗi ô rộng cố định nên tính thẳng, không cần đo.
-    private func itemRect(_ i: Int) -> CGRect {
-        CGRect(x: Self.rowPad + CGFloat(i) * (ShelfItem.width + 10), y: Self.rowPad,
-               width: ShelfItem.width, height: ShelfItem.height)
-    }
-
-    private var marqueeGesture: some Gesture {
-        DragGesture(minimumDistance: 0, coordinateSpace: .named("shelfRow"))
-            .onChanged { v in
-                if marquee == nil {
-                    // Giữ ⌘ hoặc ⇧ khi kéo khung thì cộng thêm vào vùng chọn cũ.
-                    let mods = NSEvent.modifierFlags
-                    marqueeBase = mods.contains(.command) || mods.contains(.shift) ? m.shelfSelection : []
-                    m.marqueeActive = true
-                }
-                let r = CGRect(x: min(v.startLocation.x, v.location.x), y: min(v.startLocation.y, v.location.y),
-                               width: abs(v.location.x - v.startLocation.x), height: abs(v.location.y - v.startLocation.y))
-                marquee = r
-                var sel = marqueeBase
-                if r.width > 2 || r.height > 2 {
-                    for (i, u) in m.visibleShelf.enumerated() where itemRect(i).intersects(r) { sel.insert(u) }
-                }
-                if sel != m.shelfSelection { m.shelfSelection = sel }
-            }
-            .onEnded { _ in
-                marquee = nil
-                m.marqueeActive = false
-            }
-    }
 
     var body: some View {
         if m.shelf.isEmpty {
@@ -1485,28 +1460,13 @@ struct ShelfView: View {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 10) {
                             ForEach(list, id: \.self) { url in
-                                ShelfItem(url: url, m: m, selected: m.shelfSelection.contains(url))
+                                ShelfItem(url: url, m: m, selected: m.shelfSelection.contains(url), space: "shelfRow")
                             }
                         }
                         .padding(Self.rowPad)
                         .frame(minWidth: geo.size.width, minHeight: geo.size.height, alignment: .topLeading)
-                        // Nền trong suốt nhận thao tác: kéo khung để chọn, bấm chỗ trống để bỏ chọn.
-                        .background(
-                            Color.white.opacity(0.001)
-                                .contentShape(Rectangle())
-                                .gesture(marqueeGesture)
-                        )
-                        .overlay(alignment: .topLeading) {
-                            if let r = marquee, r.width > 2 || r.height > 2 {
-                                RoundedRectangle(cornerRadius: 4)
-                                    .fill(Color.accentColor.opacity(0.18))
-                                    .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color.accentColor.opacity(0.85), lineWidth: 1))
-                                    .frame(width: r.width, height: r.height)
-                                    .offset(x: r.minX, y: r.minY)
-                                    .allowsHitTesting(false)
-                            }
-                        }
-                        .coordinateSpace(name: "shelfRow")
+                        // Kéo khung ở chỗ trống để chọn nhiều, bấm chỗ trống để bỏ chọn.
+                        .modifier(ShelfMarquee(m: m, space: "shelfRow"))
                     }
                 }
                 .frame(height: ShelfItem.height + Self.rowPad * 2)
@@ -1557,8 +1517,20 @@ struct ShelfItem: View {
     var selected = false
     var w: CGFloat = ShelfItem.width
     var h: CGFloat = ShelfItem.height
+    /// Vùng toạ độ của khung chọn (để báo vị trí thẻ cho việc kéo khung chọn nhiều).
+    var space: String? = nil
 
     var body: some View {
+        card.background {
+            if let space {
+                GeometryReader { g in
+                    Color.clear.preference(key: ShelfFrameKey.self, value: [url: g.frame(in: .named(space))])
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var card: some View {
         let exists = FileManager.default.fileExists(atPath: url.path)
         let kind = ShelfKind.of(url)
         ZStack(alignment: .bottom) {
