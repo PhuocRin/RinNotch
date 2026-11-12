@@ -44,7 +44,7 @@ struct NotchGeometry {
 enum Tab: String, CaseIterable, Identifiable {
     case media, shelf, clipboard, notes, timer, system, tools, translate
     var id: String { rawValue }
-    /// Số trên bàn phím: ⌃⌘ + số mở thẳng mục này, hoặc bấm số khi tai thỏ đang mở.
+    /// Số trên bàn phím: ⌃⇧ + số mở thẳng mục này, hoặc bấm số khi tai thỏ đang mở.
     var number: Int { (Tab.allCases.firstIndex(of: self) ?? 0) + 1 }
     var title: String {
         switch self {
@@ -1454,7 +1454,7 @@ struct ShelfView: View {
                             .contentShape(Circle())
                     }
                     .buttonStyle(.plain)
-                    .help("Mở bảng lớn (\(HotkeyCenter.combo(.library)?.display ?? "⌃⌘0"))")
+                    .help("Mở bảng lớn (\(HotkeyCenter.combo(.library)?.display ?? "⌃⇧0"))")
                 }
                 GeometryReader { geo in
                     ScrollView(.horizontal, showsIndicators: false) {
@@ -3719,8 +3719,8 @@ enum TipTopic: String, CaseIterable, Identifiable {
                                   "Hover over the notch to open it, move away to close. On Macs without a notch, hover the middle of the top edge.")),
             ("tray.and.arrow.down", L("Kéo file thả lên tai thỏ là mở ngay Kệ file.",
                                      "Drop a file on the notch to open the file shelf.")),
-            ("keyboard", L("⌃⌘1 → ⌃⌘8 mở thẳng từng mục (8 là Dịch nhanh), bấm lại đúng phím đó để đóng. Đang mở thì bấm số 1–8 để chuyển mục. ⌃⌘0 mở bảng lớn.",
-                          "⌃⌘1 → ⌃⌘8 open each section (8 is Translate); press it again to close. While open, press 1–8 to switch. ⌃⌘0 opens the big board.")),
+            ("keyboard", L("⌃⇧1 → ⌃⇧8 mở thẳng từng mục (8 là Dịch nhanh), bấm lại đúng phím đó để đóng. Đang mở thì bấm số 1–8 để chuyển mục. ⌃⇧0 mở bảng lớn.",
+                          "⌃⇧1 → ⌃⇧8 open each section (8 is Translate); press it again to close. While open, press 1–8 to switch. ⌃⇧0 opens the big board.")),
             ("hand.point.up.left", L("Cài đặt → Cách mở tai thỏ: Rê chuột, Phím tắt hoặc Cả hai. Đổi từng phím tắt cũng ở đó.",
                                     "Settings → How to open: Hover, Shortcut or Both. You can change each shortcut there too.")),
             ("eye.slash", L("⌥⌘N để ẩn / hiện RinNotch. Esc để thu tai thỏ lại.",
@@ -3755,22 +3755,22 @@ enum TipTopic: String, CaseIterable, Identifiable {
                                      "Double-click to open. Right-click: Open, AirDrop, Copy, Show in Finder, Select All, Remove.")),
             ("square.and.arrow.up", L("Nút AirDrop, Sao chép, Xử lý làm trên file đang chọn, chưa chọn file nào thì làm cả kệ.",
                               "AirDrop, Copy and Process use the selection, or the whole shelf when nothing is selected.")),
-            ("square.grid.2x2", L("File hiện thành thẻ có ảnh xem trước. Lọc theo Ảnh, Video, PDF, Tài liệu, Thư mục ở hàng trên. Nút ⤢ (hoặc ⌃⌘0) mở bảng lớn chứa hết.",
-                                 "Files show as preview cards. Filter by Images, Videos, PDFs, Documents, Folders. The ⤢ button (or ⌃⌘0) opens the big board.")),
+            ("square.grid.2x2", L("File hiện thành thẻ có ảnh xem trước. Lọc theo Ảnh, Video, PDF, Tài liệu, Thư mục ở hàng trên. Nút ⤢ (hoặc ⌃⇧0) mở bảng lớn chứa hết.",
+                                 "Files show as preview cards. Filter by Images, Videos, PDFs, Documents, Folders. The ⤢ button (or ⌃⇧0) opens the big board.")),
             ("pencil", L("Chuột phải một file → Đổi tên file… để đổi tên ngay (đổi luôn file gốc trong Finder).",
                         "Right-click a file → Rename File… (renames the original in Finder).")),
             ("wand.and.stars", L("Xử lý: đổi ảnh sang JPG / PNG / HEIC, nén ảnh, thu nhỏ, xoá nền, gộp PDF, nén ZIP. File mới nằm cạnh file gốc, file gốc giữ nguyên.",
                                 "Process: convert images to JPG / PNG / HEIC, compress, resize, remove background, merge into a PDF, ZIP. New files sit next to the originals.")),
         ]
         case .clipboard: return [
-            ("doc.on.clipboard", L("Thứ bạn copy hiện thành thẻ: ảnh, mã màu, code, link nhìn là biết. Bấm thẻ để chép lại. Mở bằng ⌃⌘3 thì dùng ← → và ↩.",
-                                  "What you copy shows as cards: images, colors, code and links at a glance. Click a card to copy it again. Opened with ⌃⌘3, use ← → and ↩.")),
+            ("doc.on.clipboard", L("Thứ bạn copy hiện thành thẻ: ảnh, mã màu, code, link nhìn là biết. Bấm thẻ để chép lại. Mở bằng ⌃⇧3 thì dùng ← → và ↩.",
+                                  "What you copy shows as cards: images, colors, code and links at a glance. Click a card to copy it again. Opened with ⌃⇧3, use ← → and ↩.")),
             ("checkmark.circle", L("Mỗi lần copy, viên \"Đã chép\" hiện dưới tai thỏ. Rê chuột vào để Ghim, Dịch hoặc Xoá ngay. Tắt trong Cài đặt nếu thấy rối.",
                                   "Each copy shows a \"Copied\" pill below the notch. Hover it to Pin, Translate or Delete. Turn it off in Settings.")),
             ("magnifyingglass", L("Gõ để tìm, không cần dấu. Hàng nút trên lọc theo loại (Link, Code, Ảnh, Màu…) và theo app đã copy (icon app). Gõ @safari cũng lọc theo app.",
                                  "Type to search. The chips filter by type (Link, Code, Image, Color…) and by the app you copied from. Typing @safari works too.")),
-            ("arrow.up.left.and.arrow.down.right", L("Nút ⤢ hoặc ⌃⌘0 mở bảng lớn: một cửa sổ chứa hết Bộ nhớ tạm và Kệ file, chỉnh được cỡ.",
-                                                    "The ⤢ button or ⌃⌘0 opens the big board: a resizable window with all your clipboard items and shelf files.")),
+            ("arrow.up.left.and.arrow.down.right", L("Nút ⤢ hoặc ⌃⇧0 mở bảng lớn: một cửa sổ chứa hết Bộ nhớ tạm và Kệ file, chỉnh được cỡ.",
+                                                    "The ⤢ button or ⌃⇧0 opens the big board: a resizable window with all your clipboard items and shelf files.")),
             ("tag", L("Chuột phải → Đặt tên để đặt tên cho một mục; tên hiện dưới thẻ và tìm được.",
                      "Right-click → Name to label an item; the name shows on the card and is searchable.")),
             ("pin", L("Bấm ghim để giữ lại lâu dài, xem ở Đã ghim. Mục đã ghim còn nguyên khi tắt app.",
@@ -3810,8 +3810,8 @@ enum TipTopic: String, CaseIterable, Identifiable {
                                           "The power / Touch ID button can't be locked; go easy on it while cleaning.")),
         ]
         case .translate: return [
-            ("character.cursor.ibeam", L("Bôi đen chữ ở app bất kỳ rồi bấm ⌃⌘8: tai thỏ hiện bản dịch. Chữ Việt dịch sang Anh, chữ khác dịch sang Việt.",
-                                        "Select text in any app and press ⌃⌘8. Vietnamese goes to English, everything else to Vietnamese.")),
+            ("character.cursor.ibeam", L("Bôi đen chữ ở app bất kỳ rồi bấm ⌃⇧8: tai thỏ hiện bản dịch. Chữ Việt dịch sang Anh, chữ khác dịch sang Việt.",
+                                        "Select text in any app and press ⌃⇧8. Vietnamese goes to English, everything else to Vietnamese.")),
             ("arrow.left.arrow.right", L("Thay chỗ chọn: đưa bản dịch vào đúng chỗ vừa bôi đen. Sao chép: chép bản dịch.",
                                         "Replace: puts the translation where your selection was. Copy: copies it.")),
             ("hand.raised", L("Đọc chữ đang bôi đen cần quyền Trợ năng: Cài đặt hệ thống → Quyền riêng tư & Bảo mật → Trợ năng → RinNotch.",

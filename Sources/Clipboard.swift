@@ -737,7 +737,7 @@ struct ClipboardView: View {
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .help("Mở bảng lớn (\(HotkeyCenter.combo(.library)?.display ?? "⌃⌘0"))")
+                .help("Mở bảng lớn (\(HotkeyCenter.combo(.library)?.display ?? "⌃⇧0"))")
             }
             if items.isEmpty {
                 VStack(spacing: 5) {
@@ -764,7 +764,7 @@ struct ClipboardView: View {
                     }
                 }
                 .frame(height: ClipCard.height + 16)
-                .help("Bấm thẻ để chép · chuột phải: ghim, đặt tên, sửa chữ, mã màu, dịch · mở bằng ⌃⌘3 thì dùng ← → ↩")
+                .help("Bấm thẻ để chép · chuột phải: ghim, đặt tên, sửa chữ, mã màu, dịch · mở bằng ⌃⇧3 thì dùng ← → ↩")
             }
         }
         .animation(.spring(response: 0.32, dampingFraction: 0.85), value: items.map(\.id))

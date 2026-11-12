@@ -36,7 +36,7 @@ enum Selection {
         let saved = snapshot(pb)
         let before = pb.changeCount
         ClipboardWatcher.shared?.pause(seconds: 3)
-        // Đợi buông ⌃⌘ của phím Dịch nhanh, không thì app nhận thành ⌃⌘C.
+        // Đợi buông ⌃⇧ của phím Dịch nhanh, không thì app nhận thành ⌃⇧C.
         waitForModifiersUp(tries: 30) {
             postKey(kVK_ANSI_C, flags: .maskCommand)
             poll(pb, before: before, saved: saved, tries: 24, done: done)

@@ -1,6 +1,7 @@
 // RinNotch — phím tắt toàn hệ thống (đổi được trong Cài đặt).
-// Mặc định: ⌥⌘N ẩn / hiện, ⌃⌘1 → ⌃⌘8 mở thẳng từng mục (8 = Dịch nhanh).
-// Chọn ⌃⌘ + số vì Final Cut Pro đã dùng ⌥ + số, ⌃⌥ + số, ⇧⌥ + số, ⌃⌥⌘ + số; macOS dùng ⇧⌘3/4/5 và ⌃ + số.
+// Mặc định: ⌥⌘N ẩn / hiện, ⌃⇧1 → ⌃⇧8 mở thẳng từng mục (8 = Dịch nhanh).
+// Chọn ⌃⇧ + số (Phước chốt 12/11/2026): Final Cut Pro đã dùng ⌥ + số, ⌃⌥ + số, ⇧⌥ + số, ⌃⌥⌘ + số;
+// Finder dùng ⌃⌘ + số (nhóm theo); macOS dùng ⇧⌘3/4/5 và ⌃ + số.
 
 import AppKit
 import SwiftUI
@@ -112,10 +113,10 @@ enum HotAction: String, CaseIterable, Identifiable {
             return KeyCombo(keyCode: UInt32(kVK_ANSI_N), mods: UInt32(cmdKey | optionKey), label: "N")
         }
         if self == .library {
-            return KeyCombo(keyCode: UInt32(kVK_ANSI_0), mods: UInt32(controlKey | cmdKey), label: "0")
+            return KeyCombo(keyCode: UInt32(kVK_ANSI_0), mods: UInt32(controlKey | shiftKey), label: "0")
         }
         guard let t = tab, let i = Tab.allCases.firstIndex(of: t), i < Self.digitCodes.count else { return nil }
-        return KeyCombo(keyCode: UInt32(Self.digitCodes[i]), mods: UInt32(controlKey | cmdKey), label: "\(i + 1)")
+        return KeyCombo(keyCode: UInt32(Self.digitCodes[i]), mods: UInt32(controlKey | shiftKey), label: "\(i + 1)")
     }
 
     /// Phím mở mục chỉ chạy khi Cách mở tai thỏ có Phím tắt. Ẩn / hiện và Dịch nhanh luôn chạy.
