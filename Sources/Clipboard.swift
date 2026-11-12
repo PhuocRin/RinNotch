@@ -534,7 +534,9 @@ final class ClipboardWatcher {
             kind = .image(img)
         }
         guard let kind else { return }
-        add(ClipItem(kind: kind, sourceID: front?.bundleIdentifier, sourceName: front?.localizedName))
+        let item = ClipItem(kind: kind, sourceID: front?.bundleIdentifier, sourceName: front?.localizedName)
+        add(item)
+        CopyToast.shared.show(item, model: m)
     }
 
     private func add(_ item: ClipItem) {
@@ -632,7 +634,8 @@ final class ClipboardWatcher {
 
 extension NotchModel {
     var visibleClips: [ClipItem] {
-        (clipFilter == .pinned ? pins : clips).filter { $0.matches(clipSearch) }
+        let base = clipFilter == .pinned ? pins : clips
+        return base.filter { (clipCategory == nil || $0.category == clipCategory) && $0.matches(clipSearch) }
     }
 }
 
@@ -650,20 +653,32 @@ enum AppIcons {
     }
 }
 
+extension ClipCategory {
+    var title: String {
+        switch self {
+        case .text: return "Chữ"
+        case .link: return "Link"
+        case .color: return "Màu"
+        case .code: return "Code"
+        case .file: return "File"
+        case .image: return "Ảnh"
+        }
+    }
+}
+
+/// Bộ nhớ tạm dạng thẻ ngang: liếc là thấy ảnh, màu, code, link vừa chép.
 struct ClipboardView: View {
     @ObservedObject var m: NotchModel
-    @FocusState private var searchFocused: Bool
 
     var body: some View {
         let items = m.visibleClips
-        VStack(spacing: 7) {
-            HStack(spacing: 8) {
-                HStack(spacing: 6) {
+        VStack(spacing: 8) {
+            HStack(spacing: 6) {
+                HStack(spacing: 5) {
                     Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
-                    TextField("", text: $m.clipSearch, prompt: Text("Tìm… gõ @link @image @color @code @file hoặc @tên-app").foregroundColor(.white.opacity(0.35)))
+                    TextField("", text: $m.clipSearch, prompt: Text("Tìm, @link @code @tên-app").foregroundColor(.white.opacity(0.35)))
                         .textFieldStyle(.plain)
                         .font(.system(size: 12))
-                        .focused($searchFocused)
                     if !m.clipSearch.isEmpty {
                         Button { m.clipSearch = "" } label: {
                             Image(systemName: "xmark.circle.fill").foregroundStyle(.white.opacity(0.5))
@@ -671,11 +686,28 @@ struct ClipboardView: View {
                         .buttonStyle(.plain)
                     }
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(RoundedRectangle(cornerRadius: 9).fill(Color.white.opacity(0.09)))
-                filterButton(.recent, "Gần đây")
-                filterButton(.pinned, "Đã ghim \(m.pins.count)")
+                .padding(.horizontal, 9)
+                .padding(.vertical, 5)
+                .frame(width: 190)
+                .background(Capsule().fill(Color.white.opacity(0.09)))
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 5) {
+                        chip("Tất cả", count: m.clips.count, on: m.clipFilter == .recent && m.clipCategory == nil, symbol: "square.grid.2x2") {
+                            m.clipFilter = .recent; m.clipCategory = nil
+                        }
+                        chip("Ghim", count: m.pins.count, on: m.clipFilter == .pinned, symbol: "pin.fill") {
+                            m.clipFilter = .pinned; m.clipCategory = nil
+                        }
+                        ForEach(ClipCategory.allCases, id: \.self) { c in
+                            let n = m.clips.filter { $0.category == c }.count
+                            if n > 0 {
+                                chip(c.title, count: n, on: m.clipFilter == .recent && m.clipCategory == c, symbol: c.symbol) {
+                                    m.clipFilter = .recent; m.clipCategory = c
+                                }
+                            }
+                        }
+                    }
+                }
             }
             if items.isEmpty {
                 VStack(spacing: 5) {
@@ -687,60 +719,70 @@ struct ClipboardView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollViewReader { proxy in
-                    ScrollView(.vertical, showsIndicators: false) {
-                        LazyVStack(spacing: 5) {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        LazyHStack(spacing: 8) {
                             ForEach(items) { item in
-                                ClipRow(item: item, m: m, selected: m.clipSelection == item.id).id(item.id)
+                                ClipCard(item: item, m: m, selected: m.clipSelection == item.id).id(item.id)
                             }
                         }
+                        .padding(.horizontal, 1)
                     }
                     .onChange(of: m.clipSelection) { _, id in
-                        if let id { withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id) } }
+                        if let id { withAnimation(.easeOut(duration: 0.18)) { proxy.scrollTo(id, anchor: .center) } }
                     }
                 }
+                .frame(height: ClipCard.height)
             }
             HStack {
-                Text("Bấm để chép · chuột phải: ghim, sửa chữ, mã màu · ↑↓ ↩ khi mở bằng phím")
-                    .font(.system(size: 11)).foregroundStyle(.white.opacity(0.5)).lineLimit(1)
+                Text("Bấm thẻ để chép · chuột phải: ghim, sửa chữ, mã màu, dịch · ← → ↩ khi mở bằng phím")
+                    .font(.system(size: 10.5)).foregroundStyle(.white.opacity(0.45)).lineLimit(1)
                 Spacer(minLength: 6)
                 if m.clipFilter == .recent && !m.clips.isEmpty {
                     Button("Xoá lịch sử") { ClipboardWatcher.shared?.clearHistory() }.buttonStyle(PillButton())
                 }
             }
         }
+        .animation(.spring(response: 0.32, dampingFraction: 0.85), value: items.map(\.id))
     }
 
     private var emptyTitle: String {
-        if !m.clipSearch.isEmpty { return "Không có mục nào khớp" }
+        if !m.clipSearch.isEmpty || m.clipCategory != nil { return "Không có mục nào khớp" }
         return m.clipFilter == .pinned ? "Chưa ghim mục nào" : "Copy gì đó, nó sẽ hiện ở đây"
     }
 
     private var emptyDetail: String {
         if !m.clipSearch.isEmpty { return "Thử bỏ dấu hoặc bớt từ khoá" }
-        return m.clipFilter == .pinned ? "Chuột phải một mục → Ghim. Mục đã ghim vẫn còn khi tắt máy."
+        return m.clipFilter == .pinned ? "Bấm ghim trên thẻ, hoặc chuột phải → Ghim. Mục đã ghim vẫn còn khi tắt app."
                                        : "Mật khẩu copy từ trình quản lý mật khẩu sẽ không được lưu"
     }
 
-    private func filterButton(_ f: ClipFilter, _ title: String) -> some View {
+    private func chip(_ title: String, count: Int, on: Bool, symbol: String, action: @escaping () -> Void) -> some View {
         Button {
-            m.clipFilter = f
             m.clipSelection = nil
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) { action() }
         } label: {
-            Text(title)
-                .font(.system(size: 11, weight: .semibold))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(Capsule().fill(Color.white.opacity(m.clipFilter == f ? 0.22 : 0.07)))
-                .contentShape(Capsule())
+            HStack(spacing: 4) {
+                Image(systemName: symbol).font(.system(size: 9.5, weight: .semibold))
+                Text(title).font(.system(size: 11, weight: .semibold))
+                Text("\(count)").font(.system(size: 10, weight: .semibold)).monospacedDigit().foregroundStyle(.white.opacity(on ? 0.75 : 0.45))
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(on ? Color.white.opacity(0.24) : Color.white.opacity(0.07)))
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
     }
 }
 
-struct ClipRow: View {
+struct ClipCard: View {
+    static let width: CGFloat = 138
+    static let height: CGFloat = 108
+
     let item: ClipItem
     @ObservedObject var m: NotchModel
     var selected = false
+    @State private var hover = false
 
     var body: some View {
         let pinned = ClipboardWatcher.shared?.isPinned(item) ?? false
@@ -748,72 +790,120 @@ struct ClipRow: View {
         Button {
             ClipboardWatcher.shared?.restore(item)
         } label: {
-            HStack(spacing: 9) {
-                leading.frame(width: 22, height: 22)
-                VStack(alignment: .leading, spacing: 1) {
-                    title.lineLimit(1).truncationMode(.tail)
-                    if item.category == .link, item.linkTitle != nil, let t = item.text {
-                        Text(t).font(.system(size: 10)).foregroundStyle(.white.opacity(0.45)).lineLimit(1).truncationMode(.middle)
-                    }
-                }
-                Spacer(minLength: 6)
+            ZStack(alignment: .bottom) {
+                content
+                    .frame(width: Self.width, height: Self.height, alignment: .topLeading)
+                footer(pinned: pinned)
                 if flash {
-                    Text("Đã chép ✓").font(.system(size: 10, weight: .semibold)).foregroundStyle(Color.green)
-                } else {
-                    Text(item.date, style: .relative).font(.system(size: 10)).foregroundStyle(.white.opacity(0.4))
+                    ZStack {
+                        Color.black.opacity(0.55)
+                        Label("Đã chép", systemImage: "checkmark.circle.fill")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(Color.green)
+                    }
+                    .transition(.opacity)
                 }
-                if let icon = AppIcons.icon(item.sourceID) {
-                    Image(nsImage: icon).resizable().frame(width: 14, height: 14).help(item.sourceName ?? "")
-                }
-                Button {
-                    ClipboardWatcher.shared?.togglePin(item)
-                } label: {
-                    Image(systemName: pinned ? "pin.fill" : "pin")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(pinned ? Color.orange : Color.white.opacity(0.4))
-                        .frame(width: 18, height: 18)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help(pinned ? "Bỏ ghim" : "Ghim (giữ lại lâu dài)")
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(RoundedRectangle(cornerRadius: 10).fill(selected ? Color.accentColor.opacity(0.35) : Color.white.opacity(0.07)))
+            .frame(width: Self.width, height: Self.height)
+            .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 13, style: .continuous)
+                    .strokeBorder(selected ? Color.accentColor : Color.white.opacity(hover ? 0.28 : 0.1), lineWidth: selected ? 2 : 1)
+            )
+            .scaleEffect(hover ? 1.03 : 1)
+            .shadow(color: .black.opacity(hover ? 0.4 : 0), radius: 8, y: 3)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .onHover { h in withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) { hover = h } }
+        .animation(.easeOut(duration: 0.15), value: flash)
         .contextMenu { menu(pinned: pinned) }
+        .help(item.sourceName.map { "Chép từ \($0)" } ?? "Bấm để chép lại")
     }
 
-    @ViewBuilder private var leading: some View {
-        switch item.category {
-        case .color:
-            RoundedRectangle(cornerRadius: 5)
-                .fill(Color(nsColor: item.text.flatMap(ClipParse.color) ?? .gray))
-                .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color.white.opacity(0.3), lineWidth: 1))
-                .frame(width: 18, height: 18)
-        case .image:
-            if case .image(let img) = item.kind {
-                Image(nsImage: img).resizable().aspectRatio(contentMode: .fill)
-                    .frame(width: 22, height: 22).clipShape(RoundedRectangle(cornerRadius: 4))
+    @ViewBuilder private var content: some View {
+        switch item.kind {
+        case .image(let img):
+            Image(nsImage: img).resizable().aspectRatio(contentMode: .fill)
+                .frame(width: Self.width, height: Self.height).clipped()
+        case .files(let urls):
+            VStack(spacing: 6) {
+                FileThumb(url: urls[0]).frame(width: 60, height: 46)
+                Text(urls.count == 1 ? urls[0].lastPathComponent : "\(urls.count) file")
+                    .font(.system(size: 10.5, weight: .medium)).lineLimit(1).truncationMode(.middle)
             }
-        default:
-            Image(systemName: item.symbol).font(.system(size: 11)).foregroundStyle(.white.opacity(0.6))
+            .padding(.top, 12).padding(.horizontal, 8)
+            .frame(maxWidth: .infinity)
+            .background(Color.white.opacity(0.07))
+        case .text(let s):
+            switch item.category {
+            case .color:
+                let c = ClipParse.color(s) ?? .gray
+                ZStack(alignment: .topLeading) {
+                    Color(nsColor: c)
+                    Text(s.trimmingCharacters(in: .whitespacesAndNewlines))
+                        .font(.system(size: 12, weight: .bold, design: .monospaced))
+                        .foregroundStyle(ClipCard.readable(on: c))
+                        .padding(9)
+                }
+            case .code:
+                Text(ClipParse.highlight(String(s.prefix(400))))
+                    .font(.system(size: 9.5, design: .monospaced))
+                    .lineLimit(6)
+                    .padding(9)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .background(Color(red: 0.1, green: 0.1, blue: 0.13))
+            case .link:
+                VStack(alignment: .leading, spacing: 4) {
+                    Image(systemName: "link").font(.system(size: 11, weight: .bold)).foregroundStyle(Color.accentColor)
+                    Text(item.linkTitle ?? (ClipParse.link(s)?.host ?? s))
+                        .font(.system(size: 11.5, weight: .semibold)).lineLimit(2)
+                    Text(s).font(.system(size: 9.5)).foregroundStyle(.white.opacity(0.5)).lineLimit(2).truncationMode(.middle)
+                }
+                .padding(9)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .background(LinearGradient(colors: [Color.accentColor.opacity(0.22), Color.white.opacity(0.05)], startPoint: .top, endPoint: .bottom))
+            default:
+                Text(s.trimmingCharacters(in: .whitespacesAndNewlines))
+                    .font(.system(size: 11))
+                    .lineLimit(5)
+                    .padding(9)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .background(Color.white.opacity(0.08))
+            }
         }
     }
 
-    @ViewBuilder private var title: some View {
-        switch item.category {
-        case .code:
-            Text(ClipParse.highlight(String(item.preview.prefix(160)))).font(.system(size: 11.5, design: .monospaced))
-        case .color:
-            Text(item.preview).font(.system(size: 12, design: .monospaced))
-        case .link:
-            Text(item.linkTitle ?? item.preview).font(.system(size: 12))
-        default:
-            Text(item.preview).font(.system(size: 12))
+    private func footer(pinned: Bool) -> some View {
+        HStack(spacing: 4) {
+            if let icon = AppIcons.icon(item.sourceID) {
+                Image(nsImage: icon).resizable().frame(width: 13, height: 13)
+            }
+            Text(item.date, style: .relative).font(.system(size: 9)).lineLimit(1)
+            Spacer(minLength: 2)
+            Button {
+                ClipboardWatcher.shared?.togglePin(item)
+            } label: {
+                Image(systemName: pinned ? "pin.fill" : "pin")
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundStyle(pinned ? Color.orange : Color.white.opacity(hover ? 0.8 : 0.35))
+                    .frame(width: 16, height: 16)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(pinned ? "Bỏ ghim" : "Ghim (giữ lại lâu dài)")
         }
+        .foregroundStyle(.white.opacity(0.75))
+        .padding(.horizontal, 7)
+        .padding(.vertical, 4)
+        .background(.ultraThinMaterial.opacity(0.9))
+        .environment(\.colorScheme, .dark)
+    }
+
+    static func readable(on c: NSColor) -> Color {
+        let s = c.usingColorSpace(.sRGB) ?? c
+        let lum = 0.299 * s.redComponent + 0.587 * s.greenComponent + 0.114 * s.blueComponent
+        return lum > 0.6 ? Color.black.opacity(0.8) : Color.white
     }
 
     @ViewBuilder private func menu(pinned: Bool) -> some View {

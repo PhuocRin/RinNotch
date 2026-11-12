@@ -180,6 +180,7 @@ final class NotchModel: ObservableObject {
     @Published var clips: [ClipItem] = []
     @Published var pins: [ClipItem] = []
     @Published var clipFilter: ClipFilter = .recent
+    @Published var clipCategory: ClipCategory?
     @Published var clipSearch = ""
     @Published var clipSelection: UUID?
     @Published var clipFlash: UUID?
@@ -351,37 +352,63 @@ struct IslandView: View {
 
     var topRadius: CGFloat { phase == .idle ? 0 : 8 }
 
+    /// Kích thước đang vẽ: chạy theo `size` bằng hai nhịp (bung: kéo ngang trước rồi mới thả xuống;
+    /// thu: kéo lên trước rồi mới thu ngang), nhìn giống Dynamic Island hơn là phóng to đều.
+    @State private var w: CGFloat = 0
+    @State private var h: CGFloat = 0
+
     var body: some View {
         let s = size
-        ZStack(alignment: .top) {
-            NotchShape(bottomRadius: bottomRadius, topRadius: topRadius).fill(Color.black)
-            Group {
-                switch phase {
-                case .idle:
-                    Color.clear
-                case .compact:
-                    CompactView(m: m)
-                        .frame(height: m.notchHeight)
-                        .padding(.horizontal, topRadius)
-                case .banner:
-                    BannerView(m: m)
-                        .padding(.horizontal, topRadius)
-                case .expanded:
-                    ExpandedView(m: m)
-                        .padding(.horizontal, topRadius)
-                }
+        Group {
+            switch phase {
+            case .idle:
+                Color.clear
+            case .compact:
+                CompactView(m: m)
+                    .frame(height: m.notchHeight)
+                    .padding(.horizontal, topRadius)
+            case .banner:
+                BannerView(m: m)
+                    .padding(.horizontal, topRadius)
+            case .expanded:
+                ExpandedView(m: m)
+                    .padding(.horizontal, topRadius)
             }
-            .transition(.opacity.combined(with: .scale(scale: 0.94, anchor: .top)))
         }
-        .frame(width: s.width + 2 * topRadius, height: s.height)
+        .transition(.asymmetric(
+            insertion: .opacity.combined(with: .scale(scale: 0.96, anchor: .top))
+                .animation(.easeOut(duration: 0.22).delay(0.08)),
+            removal: .opacity.animation(.easeIn(duration: 0.09))
+        ))
+        // Nội dung luôn ở đúng cỡ cuối, khung tai thỏ lớn dần và cắt bớt: chữ không bị xô lệch lúc bung.
+        .frame(width: s.width + 2 * topRadius, height: s.height, alignment: .top)
+        .frame(width: (w > 0 ? w : s.width) + 2 * topRadius, height: h > 0 ? h : s.height, alignment: .top)
+        .background(NotchShape(bottomRadius: bottomRadius, topRadius: topRadius).fill(Color.black))
         .clipShape(NotchShape(bottomRadius: bottomRadius, topRadius: topRadius))
         .shadow(color: .black.opacity(phase == .idle ? 0 : 0.45), radius: 18, x: 0, y: 8)
         .opacity((m.hidden || (phase == .idle && !m.hasNotch)) ? 0 : 1)
-        .animation(.spring(response: 0.42, dampingFraction: 0.76), value: phase)
-        .animation(.spring(response: 0.42, dampingFraction: 0.76), value: m.transient)
+        .animation(.spring(response: 0.36, dampingFraction: 0.8), value: phase)
+        .animation(.spring(response: 0.36, dampingFraction: 0.8), value: m.transient)
         .animation(.easeOut(duration: 0.2), value: m.hidden)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .environment(\.colorScheme, .dark)
+        .onAppear { w = s.width; h = s.height }
+        .onChange(of: s) { _, new in animate(to: new) }
+    }
+
+    private func animate(to new: CGSize) {
+        if new.height > h + 1 {
+            withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) { w = new.width }
+            withAnimation(.spring(response: 0.36, dampingFraction: 0.74).delay(0.05)) { h = new.height }
+        } else if new.height < h - 1 {
+            withAnimation(.spring(response: 0.24, dampingFraction: 0.92)) { h = new.height }
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.88).delay(0.05)) { w = new.width }
+        } else {
+            withAnimation(.spring(response: 0.34, dampingFraction: 0.8)) {
+                w = new.width
+                h = new.height
+            }
+        }
     }
 }
 
@@ -1264,40 +1291,29 @@ struct SystemView: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            tile("CPU", String(format: "%.0f%%", mon.cpu)) {
-                Sparkline(values: mon.cpuHistory, maxValue: 100).stroke(Color.cyan, lineWidth: 1.5).frame(height: 30)
+            RingTile(title: "CPU", value: mon.cpu / 100, text: String(format: "%.0f%%", mon.cpu),
+                     detail: "đang dùng", colors: [Color.cyan, Color.blue])
+            RingTile(title: "RAM", value: mon.ramUsed / max(mon.ramTotal, 1), text: "\(SystemMonitor.gb(mon.ramUsed))",
+                     detail: "trên \(SystemMonitor.gb(mon.ramTotal)) GB", colors: [Color.purple, Color.pink])
+            if let b = mon.battery {
+                RingTile(title: "Pin", value: Double(b) / 100, text: "\(b)%", detail: b <= 20 ? "pin yếu" : "còn lại",
+                         colors: b <= 20 ? [Color.red, Color.orange] : [Color.green, Color.mint])
             }
-            tile("RAM", "\(SystemMonitor.gb(mon.ramUsed)) GB") {
-                VStack(alignment: .leading, spacing: 4) {
-                    GeometryReader { g in
-                        ZStack(alignment: .leading) {
-                            Capsule().fill(Color.white.opacity(0.15))
-                            Capsule().fill(Color.purple).frame(width: g.size.width * CGFloat(min(mon.ramUsed / max(mon.ramTotal, 1), 1)))
-                        }
-                    }
-                    .frame(height: 6)
-                    Text("trên \(SystemMonitor.gb(mon.ramTotal)) GB").font(.system(size: 10)).foregroundStyle(.white.opacity(0.5))
-                }
+            RingTile(title: "Nhiệt", value: Double(levelIndex + 1) / 4, text: thermalText.0, detail: "macOS báo",
+                     colors: [thermalText.1.opacity(0.7), thermalText.1], small: true)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Mạng").font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.5))
+                Label(SystemMonitor.speed(mon.down), systemImage: "arrow.down.circle.fill").foregroundStyle(Color.green)
+                Label(SystemMonitor.speed(mon.up), systemImage: "arrow.up.circle.fill").foregroundStyle(Color.blue)
+                Sparkline(values: mon.cpuHistory, maxValue: 100).stroke(Color.cyan.opacity(0.6), lineWidth: 1.2).frame(height: 22)
+                Text("CPU 30 giây qua").font(.system(size: 9.5)).foregroundStyle(.white.opacity(0.4))
+                Spacer(minLength: 0)
             }
-            tile("Mạng", nil) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Label(SystemMonitor.speed(mon.down), systemImage: "arrow.down").foregroundStyle(Color.green)
-                    Label(SystemMonitor.speed(mon.up), systemImage: "arrow.up").foregroundStyle(Color.blue)
-                }
-                .font(.system(size: 12, weight: .semibold))
-                .monospacedDigit()
-            }
-            tile("Nhiệt", thermalText.0) {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 3) {
-                        ForEach(0..<4, id: \.self) { i in
-                            Capsule().fill(i <= levelIndex ? thermalText.1 : Color.white.opacity(0.15)).frame(height: 6)
-                        }
-                    }
-                    Text(mon.battery.map { "Pin \($0)%" } ?? "Mức nhiệt do macOS báo")
-                        .font(.system(size: 10)).foregroundStyle(.white.opacity(0.5))
-                }
-            }
+            .font(.system(size: 12, weight: .semibold))
+            .monospacedDigit()
+            .padding(12)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(RoundedRectangle(cornerRadius: 14).fill(Color.white.opacity(0.07)))
         }
         .onAppear { mon.start() }
         .onDisappear { mon.stop() }
@@ -1312,17 +1328,43 @@ struct SystemView: View {
         }
     }
 
-    func tile<C: View>(_ title: String, _ value: String?, @ViewBuilder content: () -> C) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.5))
-            if let value {
-                Text(value).font(.system(size: 20, weight: .semibold, design: .rounded)).monospacedDigit().lineLimit(1)
+}
+
+/// Vòng tròn kiểu đồng hồ đo: số ở giữa, tên và ghi chú bên dưới.
+struct RingTile: View {
+    let title: String
+    let value: Double
+    let text: String
+    let detail: String
+    let colors: [Color]
+    var small = false
+
+    var body: some View {
+        VStack(spacing: 6) {
+            ZStack {
+                Circle().stroke(Color.white.opacity(0.1), lineWidth: 7)
+                Circle()
+                    .trim(from: 0, to: CGFloat(min(max(value, 0.02), 1)))
+                    .stroke(AngularGradient(colors: colors + [colors[0]], center: .center),
+                            style: StrokeStyle(lineWidth: 7, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                    .shadow(color: colors.last!.opacity(0.5), radius: 4)
+                Text(text)
+                    .font(.system(size: small ? 11 : 15, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                    .padding(.horizontal, 8)
             }
-            content()
-            Spacer(minLength: 0)
+            .frame(width: 66, height: 66)
+            .animation(.spring(response: 0.6, dampingFraction: 0.85), value: value)
+            VStack(spacing: 1) {
+                Text(title).font(.system(size: 11, weight: .semibold))
+                Text(detail).font(.system(size: 9.5)).foregroundStyle(.white.opacity(0.45)).lineLimit(1)
+            }
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(RoundedRectangle(cornerRadius: 14).fill(Color.white.opacity(0.07)))
     }
 }
@@ -2866,10 +2908,10 @@ final class NotchController {
             guard !items.isEmpty else { return false }
             let i = items.firstIndex { $0.id == model.clipSelection }
             switch Int(e.keyCode) {
-            case kVK_DownArrow:
+            case kVK_DownArrow, kVK_RightArrow:
                 model.clipSelection = items[min((i ?? -1) + 1, items.count - 1)].id
                 return true
-            case kVK_UpArrow:
+            case kVK_UpArrow, kVK_LeftArrow:
                 model.clipSelection = items[max((i ?? items.count) - 1, 0)].id
                 return true
             case kVK_Return, kVK_ANSI_KeypadEnter:
@@ -2886,6 +2928,7 @@ final class NotchController {
     }
 
     private func mouseMoved() {
+        CopyToast.shared.mouseMoved(NSEvent.mouseLocation)
         guard !model.hidden, model.keyboardLockUntil == nil else { return }
         let p = NSEvent.mouseLocation
         if !model.expanded {
@@ -2960,6 +3003,7 @@ final class NotchController {
             }
         }
         guard !model.expanded else { return }
+        CopyToast.shared.hide()
         model.expanded = true
         panel.ignoresMouseEvents = false
     }
@@ -3078,6 +3122,7 @@ enum Prefs {
     static var openMode: OpenMode { OpenMode(rawValue: d.string(forKey: "openMode") ?? "") ?? .both }
     static var showAwake: Bool { bool("showAwake") }
     static var showNetwork: Bool { bool("showNetwork") }
+    static var showCopyToast: Bool { bool("showCopyToast") }
     static var awakeStopLowBattery: Bool { bool("awakeStopLowBattery") }
     static var awakeStopOnSleep: Bool { bool("awakeStopOnSleep") }
     static var clipLimit: Int { max(d.object(forKey: "clipLimit") as? Int ?? 50, 10) }
@@ -3286,6 +3331,7 @@ struct SettingsView: View {
     @AppStorage("showCharging") private var showCharging = true
     @AppStorage("showLowBattery") private var showLowBattery = true
     @AppStorage("showNetwork") private var showNetwork = true
+    @AppStorage("showCopyToast") private var showCopyToast = true
     @AppStorage("defaultTab") private var defaultTab = "last"
     @AppStorage("openMode") private var openMode = OpenMode.both.rawValue
     @AppStorage("clipLimit") private var clipLimit = 50
@@ -3350,6 +3396,7 @@ struct SettingsView: View {
                     Toggle(L("Cắm và rút sạc", "Charger plugged / unplugged"), isOn: $showCharging)
                     Toggle(L("Pin yếu 20% và 10%", "Low battery 20% and 10%"), isOn: $showLowBattery)
                     Toggle(L("Mất mạng và có mạng lại", "Internet lost / back"), isOn: $showNetwork)
+                    Toggle(L("\"Đã chép\" dưới tai thỏ mỗi lần copy", "\"Copied\" below the notch on every copy"), isOn: $showCopyToast)
                 }
 
                 section(L("Bộ nhớ tạm", "Clipboard")) {
@@ -3625,8 +3672,10 @@ enum TipTopic: String, CaseIterable, Identifiable {
                                 "Process: convert images to JPG / PNG / HEIC, compress, resize, remove background, merge into a PDF, ZIP. New files sit next to the originals.")),
         ]
         case .clipboard: return [
-            ("doc.on.clipboard", L("Giữ những thứ bạn copy gần nhất, kèm app đã copy. Bấm một dòng để chép lại. Mở bằng ⌃⌘3 thì dùng ↑ ↓ và ↩.",
-                                  "Keeps what you copied recently, with the app it came from. Click a row to copy it again. Opened with ⌃⌘3, use ↑ ↓ and ↩.")),
+            ("doc.on.clipboard", L("Thứ bạn copy hiện thành thẻ: ảnh, mã màu, code, link nhìn là biết. Bấm thẻ để chép lại. Mở bằng ⌃⌘3 thì dùng ← → và ↩.",
+                                  "What you copy shows as cards: images, colors, code and links at a glance. Click a card to copy it again. Opened with ⌃⌘3, use ← → and ↩.")),
+            ("checkmark.circle", L("Mỗi lần copy, viên \"Đã chép\" hiện dưới tai thỏ. Rê chuột vào để Ghim, Dịch hoặc Xoá ngay. Tắt trong Cài đặt nếu thấy rối.",
+                                  "Each copy shows a \"Copied\" pill below the notch. Hover it to Pin, Translate or Delete. Turn it off in Settings.")),
             ("magnifyingglass", L("Gõ để tìm, không cần dấu. Lọc bằng @link @image @color @code @file hoặc @tên-app (vd @safari).",
                                  "Type to search. Filter with @link @image @color @code @file or @app-name (e.g. @safari).")),
             ("pin", L("Bấm ghim để giữ lại lâu dài, xem ở Đã ghim. Mục đã ghim còn nguyên khi tắt app.",
@@ -4357,6 +4406,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NetworkWatcher.shared = NetworkWatcher(model: model)
         KeepAwake.shared.setup(model: model)
         KeyboardLock.shared.model = model
+        CopyToast.shared.setup()
         NotificationCenter.default.addObserver(forName: .rinHotkeysChanged, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.rebuildMenu() }
         }
