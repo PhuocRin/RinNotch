@@ -4913,6 +4913,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         CopyToast.shared.setup()
         PasteStack.shared.setup(model: model)
         PrivateVault.shared.setup(model: model)
+        // Mở cùng máy bật sẵn (Phước muốn 13/11): chỉ bật một lần, ai tắt trong Cài đặt thì giữ nguyên lựa chọn đó.
+        if !UserDefaults.standard.bool(forKey: "loginDefaultApplied") {
+            UserDefaults.standard.set(true, forKey: "loginDefaultApplied")
+            if SMAppService.mainApp.status != .enabled {
+                do { try SMAppService.mainApp.register() } catch { Diag.log("Mở cùng máy: \(error.localizedDescription)") }
+            }
+        }
         DownloadWatcher.shared.setup(model: model)
         EditMenu.install()
         NotificationCenter.default.addObserver(forName: .rinHotkeysChanged, object: nil, queue: .main) { [weak self] _ in

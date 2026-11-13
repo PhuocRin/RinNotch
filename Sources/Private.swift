@@ -2,8 +2,8 @@
 // Chưa mở khoá thì mục Riêng tư chỉ hiện các thẻ mờ + nút "Mở khoá bằng vân tay" (Touch ID; máy không có
 // Touch ID thì dùng mật khẩu máy). Mở xong tự khoá lại sau 3 phút, khi máy ngủ / khoá màn hình, hoặc bấm Khoá.
 //
-// Dữ liệu: mã hoá AES-GCM (CryptoKit) trong ~/Library/Application Support/RinNotch/Clipboard/private.vault.
-// Khoá mã hoá (32 byte ngẫu nhiên) nằm trong Keychain của máy, chỉ thiết bị này, chỉ khi máy đang mở khoá.
+// Dữ liệu: mỗi mục một file mã hoá AES-GCM trong ~/Library/Application Support/RinNotch/Clipboard/private/,
+// khoá đọc nằm trong chip bảo mật (Secure Enclave) của Mac, chỉ dùng được sau vân tay / mật khẩu máy (xem phần Lưu trữ).
 // Mục riêng tư không nằm trong lịch sử, ô tìm "Tất cả", sao lưu, viên "Đã chép"; chép ra thì gắn cờ
 // ConcealedType để trình quản lý bộ nhớ tạm khác (và chính RinNotch) không ghi lại.
 
@@ -27,13 +27,15 @@ final class PrivateVault {
     private var observers: [NSObjectProtocol] = []
 
     static let autoLockMinutes: Double = 3
-    private static let service = "com.phuocrin.rinnotch.private"
-    private static let account = "vault-key"
-    private static var file: URL { ClipStore.dir.appendingPathComponent("private.vault") }
 
     func setup(model: NotchModel) {
         self.model = model
-        model.privateCount = UserDefaults.standard.integer(forKey: "privateCount")
+        // Bản thử 41–42 cất trong Keychain (bị hỏi mật khẩu chuỗi khoá): để riêng file cũ, không đọc nữa.
+        let old = ClipStore.dir.appendingPathComponent("private.vault")
+        if FileManager.default.fileExists(atPath: old.path) {
+            try? FileManager.default.moveItem(at: old, to: ClipStore.dir.appendingPathComponent("private-old-keychain.vault"))
+        }
+        refreshCount()
         let ws = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.willSleepNotification, NSWorkspace.screensDidSleepNotification, NSWorkspace.sessionDidResignActiveNotification] {
             observers.append(ws.addObserver(forName: name, object: nil, queue: .main) { _ in
@@ -52,37 +54,38 @@ final class PrivateVault {
         guard let m = model, !m.privateUnlocked else { return }
         let ctx = LAContext()
         ctx.localizedFallbackTitle = "Dùng mật khẩu máy"
+        // Vân tay vừa quét xong thì dùng luôn cho khoá trong chip bảo mật, không hỏi lần hai.
+        ctx.touchIDAuthenticationAllowableReuseDuration = 30
         var err: NSError?
         guard ctx.canEvaluatePolicy(.deviceOwnerAuthentication, error: &err) else {
             m.privateStatus = "Máy chưa đặt mật khẩu đăng nhập nên không khoá được"
             return
         }
         m.privateStatus = nil
-        // Có Touch ID thì hỏi vân tay, không có (hoặc không đọc được) thì macOS cho nhập mật khẩu máy.
+        // Chỉ một bước: vân tay (Touch ID), không có hoặc không đọc được thì mật khẩu máy. Không đụng tới Keychain.
         ctx.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "mở Bộ nhớ tạm riêng tư") { ok, error in
             let cancelled = (error as? LAError).map { $0.code == .userCancel || $0.code == .appCancel || $0.code == .systemCancel } ?? false
+            let box = ContextBox(ctx)
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
-                    if ok { PrivateVault.shared.didUnlock() }
+                    if ok { PrivateVault.shared.didUnlock(box.ctx) }
                     else if !cancelled { PrivateVault.shared.model?.privateStatus = "Chưa mở được, thử lại nha" }
                 }
             }
         }
     }
 
-    private func didUnlock() {
+    private func didUnlock(_ ctx: LAContext) {
         guard let m = model else { return }
-        guard let list = load() else {
-            m.privateStatus = "Không đọc được dữ liệu riêng tư (khoá trong Keychain không khớp)"
-            return
-        }
+        let (list, failed) = Self.readAll(ctx)
+        if failed > 0 { m.privateStatus = "Có \(failed) mục không giải mã được" }
         withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
             m.privateClips = list
             m.privateUnlocked = true
         }
-        setCount(list.count)
+        refreshCount()
         scheduleLock()
-        Diag.log("Riêng tư: mở khoá")
+        Diag.log("Riêng tư: mở khoá (\(Self.meta()?.mode ?? "chưa có"))")
     }
 
     func lock() {
@@ -105,25 +108,24 @@ final class PrivateVault {
 
     // MARK: Cất / lấy ra
 
-    /// Cất một mục vào Riêng tư (không cần mở khoá: giống bỏ thư vào hộp có khoá). Mục rời lịch sử và ghim.
+    /// Cất một mục vào Riêng tư (không cần mở khoá: mã hoá bằng khoá công khai, giống bỏ thư vào hộp có khoá).
+    /// Mục rời lịch sử và ghim.
     func add(_ item: ClipItem) {
         guard let m = model else { return }
-        guard var list = m.privateUnlocked ? m.privateClips : load() else {
-            m.privateStatus = "Không cất được: dữ liệu riêng tư đọc không được"
-            return
+        if m.privateUnlocked, let dup = m.privateClips.first(where: { $0.sameContent(item) }) {
+            Self.removeFile(dup.id)
+            m.privateClips.removeAll { $0.id == dup.id }
         }
-        list.removeAll { $0.id == item.id || $0.sameContent(item) }
-        list.insert(item, at: 0)
-        guard save(list) else {
+        guard Self.write(item) else {
             m.privateStatus = "Không cất được vào Riêng tư"
             return
         }
         ClipboardWatcher.shared?.remove(item)
         if m.privateUnlocked {
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { m.privateClips = list }
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { m.privateClips.insert(item, at: 0) }
             scheduleLock()
         }
-        setCount(list.count)
+        refreshCount()
         m.privateFlash = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
             MainActor.assumeIsolated { PrivateVault.shared.model?.privateFlash = false }
@@ -139,22 +141,18 @@ final class PrivateVault {
     /// Đưa ra lại Bộ nhớ tạm thường.
     func moveOut(_ item: ClipItem) {
         guard let m = model, m.privateUnlocked else { return }
-        var list = m.privateClips
-        list.removeAll { $0.id == item.id }
-        guard save(list) else { return }
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { m.privateClips = list }
-        setCount(list.count)
+        Self.removeFile(item.id)
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { m.privateClips.removeAll { $0.id == item.id } }
+        refreshCount()
         ClipboardWatcher.shared?.reinsert(item)
         scheduleLock()
     }
 
     func delete(_ item: ClipItem) {
         guard let m = model, m.privateUnlocked else { return }
-        var list = m.privateClips
-        list.removeAll { $0.id == item.id }
-        guard save(list) else { return }
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { m.privateClips = list }
-        setCount(list.count)
+        Self.removeFile(item.id)
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { m.privateClips.removeAll { $0.id == item.id } }
+        refreshCount()
         scheduleLock()
     }
 
@@ -171,62 +169,146 @@ final class PrivateVault {
         scheduleLock()
     }
 
-    private func setCount(_ n: Int) {
-        model?.privateCount = n
-        UserDefaults.standard.set(n, forKey: "privateCount")
+    private func refreshCount() {
+        model?.privateCount = Self.itemFiles().count
     }
 
     // MARK: Lưu trữ mã hoá
+    //
+    // Thư mục ~/Library/Application Support/RinNotch/Clipboard/private/:
+    //   vault.json  : cách khoá. "se" = khoá riêng nằm trong chip bảo mật Secure Enclave của Mac (Apple silicon, Mac có
+    //                 T2), chỉ dùng được sau khi quét vân tay / nhập mật khẩu máy; file chỉ giữ bản bọc của khoá + khoá
+    //                 công khai. "file" = Mac không có chip bảo mật: khoá ngẫu nhiên nằm trong file (chỉ chủ máy đọc).
+    //   items/<id>.box : mỗi mục một file, mã hoá AES-GCM. Kiểu "se": khoá của từng mục sinh từ khoá công khai (ECIES),
+    //                 nên cất thêm lúc đang khoá không cần mở; đọc ra mới cần khoá riêng trong chip.
+    // Không dùng Keychain: bản build mới bị macOS coi là app khác nên đòi mật khẩu chuỗi khoá (Phước báo 13/11).
 
-    /// nil = có file mà đọc / giải mã không được (không được ghi đè).
-    private func load() -> [ClipItem]? {
-        guard let sealed = try? Data(contentsOf: Self.file) else { return [] }
-        guard let key = Self.key(create: false),
-              let box = try? AES.GCM.SealedBox(combined: sealed),
-              let plain = try? AES.GCM.open(box, using: key),
-              let list = try? JSONDecoder().decode([StoredClip].self, from: plain) else { return nil }
-        return list.compactMap { ClipStore.decode($0) }
+    private struct Meta: Codable {
+        var mode: String
+        var seKey: Data?
+        var publicKey: Data?
+        var fileKey: Data?
     }
 
-    private func save(_ list: [ClipItem]) -> Bool {
-        guard let key = Self.key(create: true) else { return false }
-        let stored = list.compactMap { ClipStore.encode($0, inlineImage: true) }
-        guard let plain = try? JSONEncoder().encode(stored),
-              let sealed = try? AES.GCM.seal(plain, using: key).combined else { return false }
-        try? FileManager.default.createDirectory(at: ClipStore.dir, withIntermediateDirectories: true)
-        guard (try? sealed.write(to: Self.file, options: .atomic)) != nil else { return false }
-        // Chỉ chủ máy đọc được file.
-        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: Self.file.path)
+    private struct Record: Codable {
+        var epk: Data?
+        var box: Data
+    }
+
+    private static var dir: URL { ClipStore.dir.appendingPathComponent("private", isDirectory: true) }
+    private static var itemsDir: URL { dir.appendingPathComponent("items", isDirectory: true) }
+    private static var metaFile: URL { dir.appendingPathComponent("vault.json") }
+    private static let info = Data("RinNotch private clipboard".utf8)
+
+    private static func meta() -> Meta? {
+        guard let d = try? Data(contentsOf: metaFile) else { return nil }
+        return try? JSONDecoder().decode(Meta.self, from: d)
+    }
+
+    private static func secure(_ url: URL) {
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    }
+
+    /// Tạo két lần đầu: ưu tiên chip bảo mật, không có thì khoá trong file.
+    private static func ensureMeta() -> Meta? {
+        if let m = meta() { return m }
+        try? FileManager.default.createDirectory(at: itemsDir, withIntermediateDirectories: true)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
+        var m: Meta?
+        if SecureEnclave.isAvailable,
+           let ac = SecAccessControlCreateWithFlags(nil, kSecAttrAccessibleWhenUnlockedThisDeviceOnly, [.privateKeyUsage, .userPresence], nil) {
+            do {
+                let k = try SecureEnclave.P256.KeyAgreement.PrivateKey(compactRepresentable: false, accessControl: ac)
+                m = Meta(mode: "se", seKey: k.dataRepresentation, publicKey: k.publicKey.x963Representation)
+            } catch {
+                Diag.log("Riêng tư: không tạo được khoá trong chip bảo mật (\(error)), dùng khoá trong file")
+            }
+        }
+        if m == nil {
+            var bytes = [UInt8](repeating: 0, count: 32)
+            guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else { return nil }
+            m = Meta(mode: "file", fileKey: Data(bytes))
+        }
+        guard let m, let d = try? JSONEncoder().encode(m), (try? d.write(to: metaFile, options: .atomic)) != nil else { return nil }
+        secure(metaFile)
+        return m
+    }
+
+    private static func itemFiles() -> [URL] {
+        ((try? FileManager.default.contentsOfDirectory(at: itemsDir, includingPropertiesForKeys: nil)) ?? [])
+            .filter { $0.pathExtension == "box" }
+    }
+
+    private static func removeFile(_ id: UUID) {
+        try? FileManager.default.removeItem(at: itemsDir.appendingPathComponent(id.uuidString + ".box"))
+    }
+
+    private static func write(_ item: ClipItem) -> Bool {
+        guard let m = ensureMeta(), let stored = ClipStore.encode(item, inlineImage: true),
+              let plain = try? JSONEncoder().encode(stored) else { return false }
+        var rec: Record
+        do {
+            if m.mode == "se" {
+                guard let pubData = m.publicKey else { return false }
+                let pub = try P256.KeyAgreement.PublicKey(x963Representation: pubData)
+                let eph = P256.KeyAgreement.PrivateKey()
+                let shared = try eph.sharedSecretFromKeyAgreement(with: pub)
+                let epk = eph.publicKey.x963Representation
+                let key = shared.hkdfDerivedSymmetricKey(using: SHA256.self, salt: epk, sharedInfo: info, outputByteCount: 32)
+                guard let box = try AES.GCM.seal(plain, using: key).combined else { return false }
+                rec = Record(epk: epk, box: box)
+            } else {
+                guard let fk = m.fileKey, let box = try AES.GCM.seal(plain, using: SymmetricKey(data: fk)).combined else { return false }
+                rec = Record(epk: nil, box: box)
+            }
+        } catch {
+            Diag.log("Riêng tư: mã hoá lỗi \(error)")
+            return false
+        }
+        try? FileManager.default.createDirectory(at: itemsDir, withIntermediateDirectories: true)
+        let url = itemsDir.appendingPathComponent(item.id.uuidString + ".box")
+        guard let d = try? JSONEncoder().encode(rec), (try? d.write(to: url, options: .atomic)) != nil else { return false }
+        secure(url)
         return true
     }
 
-    private static func key(create: Bool) -> SymmetricKey? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-        ]
-        var out: CFTypeRef?
-        if SecItemCopyMatching(query as CFDictionary, &out) == errSecSuccess, let d = out as? Data, d.count == 32 {
-            return SymmetricKey(data: d)
+    /// Giải mã mọi mục bằng phiên vân tay vừa xác thực. Trả về danh sách + số mục hỏng.
+    private static func readAll(_ ctx: LAContext) -> ([ClipItem], Int) {
+        guard let m = meta() else { return ([], 0) }
+        var sePriv: SecureEnclave.P256.KeyAgreement.PrivateKey?
+        if m.mode == "se" {
+            guard let kd = m.seKey,
+                  let k = try? SecureEnclave.P256.KeyAgreement.PrivateKey(dataRepresentation: kd, authenticationContext: ctx) else {
+                return ([], itemFiles().count)
+            }
+            sePriv = k
         }
-        guard create else { return nil }
-        var bytes = [UInt8](repeating: 0, count: 32)
-        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else { return nil }
-        let data = Data(bytes)
-        let add: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecAttrLabel as String: "RinNotch – Bộ nhớ tạm riêng tư",
-            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-            kSecValueData as String: data,
-        ]
-        let st = SecItemAdd(add as CFDictionary, nil)
-        if st == errSecDuplicateItem { return nil }   // có khoá nhưng đọc không được: không tạo khoá mới đè dữ liệu cũ
-        return st == errSecSuccess ? SymmetricKey(data: data) : nil
+        var out: [ClipItem] = []
+        var failed = 0
+        for url in itemFiles() {
+            guard let d = try? Data(contentsOf: url), let rec = try? JSONDecoder().decode(Record.self, from: d) else { failed += 1; continue }
+            var key: SymmetricKey?
+            if let sePriv, let epk = rec.epk,
+               let pub = try? P256.KeyAgreement.PublicKey(x963Representation: epk),
+               let shared = try? sePriv.sharedSecretFromKeyAgreement(with: pub) {
+                key = shared.hkdfDerivedSymmetricKey(using: SHA256.self, salt: epk, sharedInfo: info, outputByteCount: 32)
+            } else if let fk = m.fileKey {
+                key = SymmetricKey(data: fk)
+            }
+            guard let key, let box = try? AES.GCM.SealedBox(combined: rec.box), let plain = try? AES.GCM.open(box, using: key),
+                  let stored = try? JSONDecoder().decode(StoredClip.self, from: plain), let item = ClipStore.decode(stored) else {
+                failed += 1
+                continue
+            }
+            out.append(item)
+        }
+        return (out.sorted { $0.date > $1.date }, failed)
     }
+}
+
+private final class ContextBox: @unchecked Sendable {
+    let ctx: LAContext
+    init(_ c: LAContext) { ctx = c }
 }
 
 // MARK: - Giao diện
