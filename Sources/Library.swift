@@ -394,7 +394,9 @@ struct LibraryView: View {
     private var clipGrid: some View {
         let items = m.visibleClips
         return Group {
-            if items.isEmpty {
+            if m.clipFilter == .vault && !m.privateUnlocked {
+                VaultLockedView(m: m, cardW: 186, cardH: 146, large: true)
+            } else if items.isEmpty {
                 empty(symbol: "doc.on.clipboard", text: m.clips.isEmpty && m.pins.isEmpty ? "Copy gì đó, nó sẽ hiện ở đây" : "Không có mục nào khớp")
             } else {
                 ScrollView {

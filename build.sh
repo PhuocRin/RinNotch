@@ -23,6 +23,7 @@ for ARCH in arm64 x86_64; do
     -framework Cocoa -framework SwiftUI -framework AVFoundation -framework CoreAudio \
     -framework IOKit -framework Carbon -framework ServiceManagement -framework UniformTypeIdentifiers -framework QuickLookThumbnailing \
     -framework Vision -framework CoreImage -framework PDFKit -framework Network -framework NaturalLanguage -framework LinkPresentation \
+    -framework LocalAuthentication -framework CryptoKit -framework Security \
     -Xfrontend -disable-autolink-framework -Xfrontend Translation \
     -Xlinker -weak_framework -Xlinker Translation
 done

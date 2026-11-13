@@ -120,7 +120,7 @@ struct ClipItem: Identifiable {
     }
 }
 
-enum ClipFilter: String { case recent, pinned }
+enum ClipFilter: String { case recent, pinned, vault }
 
 // MARK: - Nhận dạng
 
@@ -548,7 +548,7 @@ final class ClipboardWatcher {
     func checkNow() { poll() }
 
     /// Đặt một mục vào bộ nhớ tạm mà không ghi thêm vào lịch sử, không đổi thứ tự (Copy liên tục dán lần lượt).
-    func writeQuietly(_ item: ClipItem) {
+    func writeQuietly(_ item: ClipItem, concealed: Bool = false) {
         let pb = NSPasteboard.general
         pb.clearContents()
         switch item.kind {
@@ -556,8 +556,13 @@ final class ClipboardWatcher {
         case .files(let urls): pb.writeObjects(urls as [NSURL])
         case .image(let img): pb.writeObjects([img])
         }
+        // Cờ quy ước của các trình quản lý bộ nhớ tạm: "đừng ghi lại mục này".
+        if concealed { pb.setData(Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")) }
         ignore(pb.changeCount)
     }
+
+    /// Đưa một mục (vừa lấy ra khỏi Riêng tư) về đầu lịch sử.
+    func reinsert(_ item: ClipItem) { add(item) }
 
     private func add(_ item: ClipItem) {
         m.clips.removeAll { $0.sameContent(item) }
@@ -667,6 +672,7 @@ final class ClipboardWatcher {
 
 extension NotchModel {
     var visibleClips: [ClipItem] {
+        if clipFilter == .vault { return privateUnlocked ? privateClips.filter { $0.matches(clipSearch) } : [] }
         let base = clipFilter == .pinned ? pins : clips
         return base.filter {
             (clipCategory == nil || $0.category == clipCategory) && (clipApp == nil || $0.sourceID == clipApp) && $0.matches(clipSearch)
@@ -730,6 +736,7 @@ struct ClipboardView: View {
                         ClipChips(m: m)
                     }
                 }
+                if m.clipFilter == .vault && m.privateUnlocked { VaultLockButton() }
                 StackToggleButton(m: m)
                 if m.clipFilter == .recent && !m.clips.isEmpty {
                     Button {
@@ -756,9 +763,12 @@ struct ClipboardView: View {
                 .buttonStyle(HoverPlain())
                 .help("Mở bảng lớn (\(HotkeyCenter.combo(.library)?.display ?? "⌃⇧0"))")
             }
-            if items.isEmpty {
+            if m.clipFilter == .vault && !m.privateUnlocked {
+                VaultLockedView(m: m)
+                    .frame(height: ClipCard.height + 16)
+            } else if items.isEmpty {
                 VStack(spacing: 5) {
-                    Image(systemName: m.clipFilter == .pinned ? "pin" : "doc.on.clipboard").font(.system(size: 20))
+                    Image(systemName: m.clipFilter == .pinned ? "pin" : (m.clipFilter == .vault ? "lock.open" : "doc.on.clipboard")).font(.system(size: 20))
                     Text(emptyTitle).font(.system(size: 12, weight: .semibold))
                     Text(emptyDetail).font(.system(size: 11)).foregroundStyle(.white.opacity(0.55))
                 }
@@ -789,11 +799,13 @@ struct ClipboardView: View {
 
     private var emptyTitle: String {
         if !m.clipSearch.isEmpty || m.clipCategory != nil || m.clipApp != nil { return "Không có mục nào khớp" }
+        if m.clipFilter == .vault { return "Riêng tư đang trống" }
         return m.clipFilter == .pinned ? "Chưa ghim mục nào" : "Copy gì đó, nó sẽ hiện ở đây"
     }
 
     private var emptyDetail: String {
         if !m.clipSearch.isEmpty { return "Thử bỏ dấu hoặc bớt từ khoá" }
+        if m.clipFilter == .vault { return "Kéo thẻ thả vào nút Riêng tư, hoặc chuột phải thẻ → Chuyển vào Riêng tư" }
         return m.clipFilter == .pinned ? "Bấm ghim trên thẻ, hoặc chuột phải → Ghim. Mục đã ghim vẫn còn khi tắt app."
                                        : "Mật khẩu copy từ trình quản lý mật khẩu sẽ không được lưu"
     }
@@ -812,6 +824,7 @@ struct ClipChips: View {
         chip("Ghim", count: m.pins.count, on: m.clipFilter == .pinned, symbol: "pin.fill") {
             m.clipFilter = .pinned; m.clipCategory = nil; m.clipApp = nil
         }
+        VaultChip(m: m)
         ForEach(ClipCategory.allCases, id: \.self) { c in
             let n = m.clips.filter { $0.category == c }.count
             if n > 0 {
@@ -895,11 +908,14 @@ struct ClipCard: View {
     var h: CGFloat = ClipCard.height
     @State private var hover = false
 
+    /// Thẻ đang nằm trong mục Riêng tư (đã mở khoá).
+    private var isPrivate: Bool { m.clipFilter == .vault }
+
     var body: some View {
         let pinned = ClipboardWatcher.shared?.isPinned(item) ?? false
         let flash = m.clipFlash == item.id
         Button {
-            ClipboardWatcher.shared?.restore(item)
+            if isPrivate { PrivateVault.shared.copy(item) } else { ClipboardWatcher.shared?.restore(item) }
         } label: {
             ZStack(alignment: .bottom) {
                 content
@@ -928,8 +944,10 @@ struct ClipCard: View {
         .buttonStyle(.plain)
         .onHover { h in withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) { hover = h } }
         .animation(.easeOut(duration: 0.15), value: flash)
-        .contextMenu { menu(pinned: pinned) }
-        .help(item.sourceName.map { "Chép từ \($0)" } ?? "Bấm để chép lại")
+        .contextMenu { if isPrivate { privateMenu } else { menu(pinned: pinned) } }
+        .modifier(ClipDragModifier(item: item, enabled: !isPrivate))
+        .help(isPrivate ? "Mục riêng tư · bấm để chép (không ghi vào lịch sử)"
+                        : (item.sourceName.map { "Chép từ \($0) · kéo thả vào nút Riêng tư để cất" } ?? "Bấm để chép lại"))
     }
 
     @ViewBuilder private var content: some View {
@@ -997,6 +1015,9 @@ struct ClipCard: View {
                 Text(item.date, style: .relative).font(.system(size: 9)).lineLimit(1)
             }
             Spacer(minLength: 2)
+            if isPrivate {
+                Image(systemName: "lock.fill").font(.system(size: 9, weight: .semibold)).foregroundStyle(Color.orange)
+            } else {
             Button {
                 ClipboardWatcher.shared?.togglePin(item)
             } label: {
@@ -1008,6 +1029,7 @@ struct ClipCard: View {
             }
             .buttonStyle(HoverPlain())
             .help(pinned ? "Bỏ ghim" : "Ghim (giữ lại lâu dài)")
+            }
         }
         .foregroundStyle(.white.opacity(0.75))
         .padding(.horizontal, 7)
@@ -1022,9 +1044,17 @@ struct ClipCard: View {
         return lum > 0.6 ? Color.black.opacity(0.8) : Color.white
     }
 
+    @ViewBuilder private var privateMenu: some View {
+        Button("Sao chép") { PrivateVault.shared.copy(item) }
+        Button("Bỏ khỏi Riêng tư (về Bộ nhớ tạm)") { PrivateVault.shared.moveOut(item) }
+        Divider()
+        Button("Xoá hẳn mục này") { PrivateVault.shared.delete(item) }
+    }
+
     @ViewBuilder private func menu(pinned: Bool) -> some View {
         Button("Sao chép") { ClipboardWatcher.shared?.restore(item) }
         Button(pinned ? "Bỏ ghim" : "Ghim") { ClipboardWatcher.shared?.togglePin(item) }
+        Button("Chuyển vào Riêng tư 🔒") { PrivateVault.shared.add(item) }
         Button(item.name == nil ? "Đặt tên…" : "Đổi tên…") {
             if let n = Prompt.text(title: item.name == nil ? "Đặt tên cho mục này" : "Đổi tên",
                                    message: "Tên hiện dưới thẻ và tìm được bằng ô tìm.",
@@ -1094,5 +1124,61 @@ struct StackToggleButton: View {
         .buttonStyle(.plain)
         .help(on ? "Tắt Copy liên tục (hoặc nhấn ⌃ hai lần)" : "Copy nhiều thứ rồi ⌘V dán lần lượt (hoặc nhấn ⌃ hai lần)")
         .onHover { inside in withAnimation(HoverAnim.bounce) { hovered = inside } }
+    }
+}
+
+
+/// Chỉ cho kéo thẻ thường (thẻ Riêng tư không kéo ra ngoài được).
+struct ClipDragModifier: ViewModifier {
+    let item: ClipItem
+    let enabled: Bool
+    @ViewBuilder func body(content: Content) -> some View {
+        if enabled { content.clipDrag(item) } else { content }
+    }
+}
+
+/// Chip "Riêng tư" trong hàng lọc: bấm để xem, thả thẻ vào để cất. Có ổ khoá, đang khoá thì ổ khoá đóng.
+struct VaultChip: View {
+    @ObservedObject var m: NotchModel
+    @State private var targeted = false
+    @State private var hovered = false
+
+    var body: some View {
+        let on = m.clipFilter == .vault
+        Button {
+            m.clipSelection = nil
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
+                m.clipFilter = .vault; m.clipCategory = nil; m.clipApp = nil
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: m.privateUnlocked ? "lock.open.fill" : "lock.fill").font(.system(size: 9.5, weight: .semibold))
+                Text("Riêng tư").font(.system(size: 11, weight: .semibold))
+                Text("\(m.privateCount)").font(.system(size: 10, weight: .semibold)).monospacedDigit()
+                    .foregroundStyle(.white.opacity(on ? 0.75 : 0.45))
+            }
+            .foregroundStyle(targeted || m.privateFlash ? Color.orange : Color.white)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(targeted || m.privateFlash ? Color.orange.opacity(0.3)
+                                       : (on ? Color.white.opacity(0.24) : Color.white.opacity(hovered ? 0.14 : 0.07))))
+            .overlay(Capsule().strokeBorder(Color.orange.opacity(targeted ? 0.9 : 0), style: StrokeStyle(lineWidth: 1.5, dash: [4, 3])))
+            .scaleEffect(targeted ? 1.15 : (hovered || m.privateFlash ? 1.1 : 1))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help("Bộ nhớ tạm riêng tư, khoá bằng vân tay · kéo thẻ thả vào đây để cất")
+        .onHover { inside in withAnimation(HoverAnim.bounce) { hovered = inside } }
+        .animation(HoverAnim.bounce, value: targeted)
+        .animation(HoverAnim.bounce, value: m.privateFlash)
+        .onDrop(of: [UTType.rinClip], isTargeted: $targeted) { providers in
+            for p in providers {
+                p.loadDataRepresentation(forTypeIdentifier: UTType.rinClip.identifier) { data, _ in
+                    guard let data, let s = String(data: data, encoding: .utf8), let id = UUID(uuidString: s) else { return }
+                    Task { @MainActor in PrivateVault.shared.add(id: id) }
+                }
+            }
+            return true
+        }
     }
 }

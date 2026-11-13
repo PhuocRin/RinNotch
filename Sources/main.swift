@@ -234,6 +234,12 @@ final class NotchModel: ObservableObject {
     @Published var stackPasted = 0
     /// File đang tải trong thư mục Tải về (nil = không có).
     @Published var downloads: DownloadSummary?
+    /// Bộ nhớ tạm riêng tư: chỉ có dữ liệu khi đã mở khoá.
+    @Published var privateClips: [ClipItem] = []
+    @Published var privateUnlocked = false
+    @Published var privateCount = 0
+    @Published var privateStatus: String?
+    @Published var privateFlash = false
 
     var musicCompact: Bool { Prefs.showMusic && nowPlaying?.playing == true && !(nowPlaying?.title.isEmpty ?? true) }
     var timerCompact: Bool { Prefs.showTimer && timer.running }
@@ -3352,7 +3358,7 @@ final class NotchController {
                 return true
             case kVK_Return, kVK_ANSI_KeypadEnter:
                 let item = i.map { items[$0] } ?? items[0]
-                ClipboardWatcher.shared?.restore(item)
+                if model.clipFilter == .vault { PrivateVault.shared.copy(item) } else { ClipboardWatcher.shared?.restore(item) }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
                     MainActor.assumeIsolated { self?.collapse() }
                 }
@@ -4164,6 +4170,8 @@ enum TipTopic: String, CaseIterable, Identifiable {
                                                 "Right-click: quick text fixes (case, remove accents, blank lines…), copy colors as HEX / RGB / HSL, open links, translate.")),
             ("square.stack.3d.up", L("Copy liên tục: nhấn ⌃ hai lần (hoặc nút chồng giấy), copy nhiều thứ, rồi mỗi lần ⌘V dán lần lượt từng thứ. Nhấn ⌃ hai lần nữa để tắt; dán hết là tự tắt.",
                                     "Paste Stack: press ⌃ twice (or the stack button), copy several things, then each ⌘V pastes the next one in order. Press ⌃ twice again to stop; it stops by itself after the last one.")),
+            ("lock.fill", L("Riêng tư: kéo thẻ thả vào nút Riêng tư (hoặc chuột phải → Chuyển vào Riêng tư). Muốn xem thì Mở khoá bằng vân tay (hoặc mật khẩu máy); tự khoá lại sau 3 phút, khi máy ngủ hoặc khoá màn hình.",
+                           "Private: drag a card onto the Private chip (or right-click → Move to Private). Unlock with Touch ID (or your Mac password) to see it; it locks again after 3 minutes, on sleep or screen lock.")),
             ("lock", L("Mật khẩu copy từ trình quản lý mật khẩu không được lưu. Thêm app không muốn ghi trong Cài đặt.",
                       "Passwords from password managers are never saved. Add apps to ignore in Settings.")),
         ]
@@ -4904,6 +4912,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         KeyboardLock.shared.model = model
         CopyToast.shared.setup()
         PasteStack.shared.setup(model: model)
+        PrivateVault.shared.setup(model: model)
         DownloadWatcher.shared.setup(model: model)
         EditMenu.install()
         NotificationCenter.default.addObserver(forName: .rinHotkeysChanged, object: nil, queue: .main) { [weak self] _ in

@@ -34,5 +34,18 @@
 	<string>RinNotch lưu ghi chú nhanh vào app Notes, và hỏi Apple Music, Spotify đang phát bài gì để hiện trên tai thỏ.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Phước Rin</string>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.phuocrin.rinnotch.clip</string>
+			<key>UTTypeDescription</key>
+			<string>RinNotch clipboard item</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>
