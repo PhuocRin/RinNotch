@@ -18,7 +18,7 @@ Trang tải và hướng dẫn cài có hình: https://phuocrin.com/rinnotch/
 - **Hẹn giờ**: bấm giờ từ 00:00:00 hoặc đếm ngược 1 phút tới 1 giờ, hết giờ có chuông.
 - **Hệ thống**: CPU, RAM, tốc độ mạng, mức nhiệt (chỉ đo khi mở mục này).
 - **Thông báo thả xuống**: tai nghe kết nối (kèm % pin AirPods, icon đúng mẫu), cắm / rút sạc, pin yếu 20% và 10%, mất mạng và có mạng lại.
-- **Tiến trình tải về**: tải bằng Safari, Chrome (và trình duyệt nhân Chromium) hoặc nhận AirDrop vào thư mục Tải về thì hai bên tai thỏ hiện % và tốc độ, xong thì báo. Đọc từ tiến trình file mà Finder dùng, không đọc nội dung file. Tải lên (upload) thì macOS không cho app khác xem nên không có.
+- **Tiến trình tải về**: tải bằng Safari, Chrome (và trình duyệt nhân Chromium) hoặc nhận AirDrop vào thư mục Tải về thì hai bên tai thỏ hiện % và tốc độ; rê chuột vào là Kệ file có thẻ đang tải (thanh %, tốc độ, thời gian còn lại; bấm để mở trình duyệt, nút huỷ tải, Hiện trong Finder); tải xong file tự nằm trên Kệ (tắt được). Đọc từ tiến trình file mà Finder dùng, không đọc nội dung file. Tải lên (upload) thì macOS không cho app khác xem nên không có.
 - **Ghi âm**: app nào đang dùng micro thì hiện icon app, thời gian cộng dồn qua các lần tạm dừng và sóng âm.
 - **Mở cùng máy**: bật sẵn từ lần mở đầu tiên, tắt trong Cài đặt nếu không cần.
 - **Màn hình không tai thỏ**: màn hình rời, iPad làm màn hình phụ (Sidecar), Mac mini / iMac: RinNotch hiện dạng viên thuốc nổi giữa thanh menu, rê chuột vào để mở, đủ các mục như trên MacBook. Có nhiều màn hình thì tai thỏ / viên thuốc đi theo màn hình có chuột (tắt được trong Cài đặt).

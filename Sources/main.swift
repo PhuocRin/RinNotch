@@ -234,6 +234,8 @@ final class NotchModel: ObservableObject {
     @Published var stackPasted = 0
     /// File đang tải trong thư mục Tải về (nil = không có).
     @Published var downloads: DownloadSummary?
+    /// Từng file đang tải (thẻ ở đầu Kệ file).
+    @Published var downloadItems: [DownloadItem] = []
     /// Bộ nhớ tạm riêng tư: chỉ có dữ liệu khi đã mở khoá.
     @Published var privateClips: [ClipItem] = []
     @Published var privateUnlocked = false
@@ -1748,7 +1750,7 @@ struct ShelfView: View {
     @StateObject private var marquee = MarqueeState()
 
     var body: some View {
-        if m.shelf.isEmpty {
+        if m.shelf.isEmpty && m.downloadItems.isEmpty {
             RoundedRectangle(cornerRadius: 16)
                 .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6, 5]))
                 .foregroundStyle(Color.white.opacity(m.dropTargeted ? 0.85 : 0.3))
@@ -1794,10 +1796,16 @@ struct ShelfView: View {
                 GeometryReader { geo in
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 10) {
+                            // File đang tải đứng đầu hàng; tải xong tự thành file trên kệ (tắt được trong Cài đặt).
+                            ForEach(m.downloadItems) { d in
+                                DownloadCard(item: d)
+                                    .transition(.scale(scale: 0.85).combined(with: .opacity))
+                            }
                             ForEach(list, id: \.self) { url in
                                 ShelfItem(url: url, m: m, selected: m.shelfSelection.contains(url), space: "shelfArea")
                             }
                         }
+                        .animation(.spring(response: 0.35, dampingFraction: 0.85), value: m.downloadItems.map(\.id))
                         .padding(Self.rowPad)
                         .frame(minWidth: geo.size.width, minHeight: geo.size.height, alignment: .topLeading)
                         // Kéo khung ở chỗ trống để chọn nhiều, bấm chỗ trống để bỏ chọn.
@@ -1818,8 +1826,8 @@ struct ShelfView: View {
                         .lineLimit(1)
                     Spacer(minLength: 4)
                     let targets = sel.isEmpty ? list : sel
-                    Button("AirDrop") { Actions.airDrop(targets) }.buttonStyle(PillButton(prominent: true))
-                    Button("Sao chép") { Actions.copyFiles(targets) }.buttonStyle(PillButton())
+                    Button("AirDrop") { Actions.airDrop(targets) }.buttonStyle(PillButton(prominent: true)).disabled(targets.isEmpty)
+                    Button("Sao chép") { Actions.copyFiles(targets) }.buttonStyle(PillButton()).disabled(targets.isEmpty)
                     Menu {
                         ForEach(ShelfTools.ops(for: targets), id: \.self) { op in
                             Button(op.title) { ShelfTools.run(op, on: targets, m: m) }
@@ -3430,7 +3438,9 @@ final class NotchController {
             model.tab = tab
         } else if !model.expanded && model.transient == nil && model.recording == nil {
             // Đang hiện dạng gọn của hẹn giờ hoặc nhạc thì mở thẳng mục đó, không thì theo Cài đặt.
-            if model.timerCompact { model.tab = .timer }
+            // Đang tải file: mở thẳng Kệ file để thấy thẻ đang tải (huỷ, mở trình duyệt…).
+            if model.downloads != nil { model.tab = .shelf }
+            else if model.timerCompact { model.tab = .timer }
             else if model.musicCompact { model.tab = .media }
             else if let t = Tab(rawValue: Prefs.defaultTab) { model.tab = t }
         }
@@ -3578,6 +3588,7 @@ enum Prefs {
     static var showNetwork: Bool { bool("showNetwork") }
     static var showCopyToast: Bool { bool("showCopyToast") }
     static var showDownloads: Bool { bool("showDownloads") }
+    static var downloadsToShelf: Bool { bool("downloadsToShelf") }
     static var stackDoubleControl: Bool { bool("stackDoubleControl") }
     static var followMouseScreen: Bool { bool("followMouseScreen") }
     static var awakeStopLowBattery: Bool { bool("awakeStopLowBattery") }
@@ -3790,6 +3801,7 @@ struct SettingsView: View {
     @AppStorage("showNetwork") private var showNetwork = true
     @AppStorage("showCopyToast") private var showCopyToast = true
     @AppStorage("showDownloads") private var showDownloads = true
+    @AppStorage("downloadsToShelf") private var downloadsToShelf = true
     @AppStorage("stackDoubleControl") private var stackDoubleControl = true
     @AppStorage("showIdlePill") private var showIdlePill = true
     @AppStorage("followMouseScreen") private var followMouseScreen = true
@@ -3861,6 +3873,8 @@ struct SettingsView: View {
                     Toggle(L("Đang giữ máy thức", "Keep awake"), isOn: $showAwake)
                     Toggle(L("Tiến trình tải về (Safari, Chrome, AirDrop…)", "Download progress (Safari, Chrome, AirDrop…)"), isOn: $showDownloads)
                         .onChange(of: showDownloads) { DownloadWatcher.shared.refresh() }
+                    Toggle(L("Tải xong tự thêm file vào Kệ file", "Add finished downloads to the Shelf"), isOn: $downloadsToShelf)
+                        .disabled(!showDownloads)
                 }
 
                 section(L("Thông báo thả xuống", "Drop-down alerts")) {
@@ -4245,8 +4259,8 @@ enum TipTopic: String, CaseIterable, Identifiable {
                             "Losing the internet for more than a few seconds drops an alert, and so does getting it back.")),
             ("waveform", L("App đang ghi âm (Ghi âm, QuickTime…) thì tai thỏ hiện sóng âm và thời gian. Sóng âm cần quyền micro.",
                           "When an app records audio (Voice Memos, QuickTime…), the notch shows a waveform and time. The waveform needs mic access.")),
-            ("arrow.down.circle", L("Đang tải file bằng Safari, Chrome hoặc nhận AirDrop vào thư mục Tải về: hai bên tai thỏ hiện % và tốc độ, xong thì báo. Tải lên (upload) thì macOS không cho app khác xem.",
-                                   "Downloading with Safari, Chrome or receiving AirDrop into Downloads: the notch shows % and speed, then tells you when it's done. macOS doesn't expose uploads to other apps.")),
+            ("arrow.down.circle", L("Đang tải file bằng Safari, Chrome hoặc nhận AirDrop vào thư mục Tải về: hai bên tai thỏ hiện % và tốc độ. Rê chuột vào là mở Kệ file có thẻ đang tải: bấm để mở trình duyệt, nút ✕ để huỷ, chuột phải để Hiện trong Finder. Tải xong file tự nằm trên Kệ. Tải lên (upload) thì macOS không cho app khác xem.",
+                                   "Downloading with Safari, Chrome or receiving AirDrop into Downloads: the notch shows % and speed. Hover to open the Shelf with a download card: click to open the browser, ✕ to cancel, right-click to show in Finder. Finished files land on the Shelf. macOS doesn't expose uploads to other apps.")),
             ("switch.2", L("Bật / tắt từng loại trong Cài đặt.", "Turn each one on or off in Settings.")),
         ]
         }

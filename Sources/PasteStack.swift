@@ -82,6 +82,7 @@ final class PasteStack {
         removePasteTap()
         guard let m = model, let s = m.stack else { return }
         let pasted = m.stackPasted
+        snapshots.removeAll()
         m.stack = nil
         m.stackPasted = 0
         Diag.log("Copy liên tục: tắt (\(pasted)/\(s.count))")
@@ -101,6 +102,47 @@ final class PasteStack {
     func collect(_ item: ClipItem) {
         guard let m = model, m.stack != nil else { return }
         m.stack?.append(item)
+        snapshots[item.id] = Self.snapshot()
+    }
+
+    /// Bản chụp đầy đủ bộ nhớ tạm lúc copy (chữ có định dạng, link, ảnh…), chỉ giữ trong RAM khi Copy liên tục đang bật.
+    private var snapshots: [UUID: [[NSPasteboard.PasteboardType: Data]]] = [:]
+
+    /// Chụp mọi kiểu dữ liệu của bộ nhớ tạm hiện tại (giới hạn 25 MB để không ngốn RAM với ảnh lớn).
+    private static func snapshot() -> [[NSPasteboard.PasteboardType: Data]]? {
+        guard let items = NSPasteboard.general.pasteboardItems, !items.isEmpty else { return nil }
+        var total = 0
+        var out: [[NSPasteboard.PasteboardType: Data]] = []
+        for it in items {
+            var dict: [NSPasteboard.PasteboardType: Data] = [:]
+            for t in it.types {
+                // Bỏ các kiểu đánh dấu tạm của hệ thống / trình quản lý bộ nhớ tạm.
+                if t.rawValue.hasPrefix("dyn.") || t.rawValue.hasPrefix("org.nspasteboard.") { continue }
+                guard let d = it.data(forType: t) else { continue }
+                total += d.count
+                if total > 25_000_000 { return nil }
+                dict[t] = d
+            }
+            if !dict.isEmpty { out.append(dict) }
+        }
+        return out.isEmpty ? nil : out
+    }
+
+    /// Dán lại đúng như lúc copy (giữ định dạng). Không có bản chụp thì dán phần chữ / ảnh / file như cũ.
+    private func write(_ item: ClipItem) {
+        guard let snap = snapshots[item.id] else {
+            ClipboardWatcher.shared?.writeQuietly(item)
+            return
+        }
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        let items: [NSPasteboardItem] = snap.map { dict in
+            let pi = NSPasteboardItem()
+            for (t, d) in dict { pi.setData(d, forType: t) }
+            return pi
+        }
+        pb.writeObjects(items)
+        ClipboardWatcher.shared?.ignore(pb.changeCount)
     }
 
     // MARK: ⌘V
@@ -110,7 +152,7 @@ final class PasteStack {
         // Vừa ⌘C xong bấm ⌘V liền: lấy ngay mục mới chưa kịp ghi.
         ClipboardWatcher.shared?.checkNow()
         guard let s = m.stack, m.stackPasted < s.count else { return }
-        ClipboardWatcher.shared?.writeQuietly(s[m.stackPasted])
+        write(s[m.stackPasted])
         m.stackPasted += 1
         if m.stackPasted >= s.count {
             // Để app kia đọc xong bộ nhớ tạm rồi mới tắt.

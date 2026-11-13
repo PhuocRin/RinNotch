@@ -113,6 +113,12 @@ final class PrivateVault {
             }
         }
         list.sort { $0.date > $1.date }
+        // Lúc đang khoá không đọc được bên trong nên cất trùng thì thành 2 bản: mở khoá thì gộp lại, giữ bản mới nhất.
+        var kept: [ClipItem] = []
+        for item in list {
+            if kept.contains(where: { $0.sameContent(item) }) { Self.removeFile(item.id) } else { kept.append(item) }
+        }
+        list = kept
         if bad > 0 { setStatus("Có \(bad) mục không giải mã được") }
         withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
             m.privateClips = list
