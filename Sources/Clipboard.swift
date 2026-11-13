@@ -540,7 +540,23 @@ final class ClipboardWatcher {
         guard let kind else { return }
         let item = ClipItem(kind: kind, sourceID: front?.bundleIdentifier, sourceName: front?.localizedName)
         add(item)
+        PasteStack.shared.collect(item)
         CopyToast.shared.show(item, model: m)
+    }
+
+    /// Hỏi bộ nhớ tạm ngay, không chờ nhịp 0,6 giây (Copy liên tục cần mục vừa chép trước khi ⌘V).
+    func checkNow() { poll() }
+
+    /// Đặt một mục vào bộ nhớ tạm mà không ghi thêm vào lịch sử, không đổi thứ tự (Copy liên tục dán lần lượt).
+    func writeQuietly(_ item: ClipItem) {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        switch item.kind {
+        case .text(let s): pb.setString(s, forType: .string)
+        case .files(let urls): pb.writeObjects(urls as [NSURL])
+        case .image(let img): pb.writeObjects([img])
+        }
+        ignore(pb.changeCount)
     }
 
     private func add(_ item: ClipItem) {
@@ -714,6 +730,18 @@ struct ClipboardView: View {
                         ClipChips(m: m)
                     }
                 }
+                Button {
+                    PasteStack.shared.toggle()
+                } label: {
+                    Image(systemName: m.stack != nil ? "square.stack.3d.up.fill" : "square.stack.3d.up")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(m.stack != nil ? Color.orange : Color.white)
+                        .frame(width: 26, height: 26)
+                        .background(Circle().fill(m.stack != nil ? Color.orange.opacity(0.22) : Color.white.opacity(0.09)))
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .help(m.stack != nil ? "Tắt Copy liên tục" : "Copy liên tục: copy nhiều thứ rồi ⌘V dán lần lượt (hoặc nhấn ⌃ hai lần)")
                 if m.clipFilter == .recent && !m.clips.isEmpty {
                     Button {
                         ClipboardWatcher.shared?.clearHistory()

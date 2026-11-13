@@ -13,6 +13,8 @@ final class CopyToast: ObservableObject {
     @Published var showID = UUID()
     @Published var hovering = false
     @Published var notchHeight: CGFloat = 32
+    /// Đang Copy liên tục thì hiện "Thêm #3" màu cam thay cho "Đã chép".
+    @Published var stackIndex: Int?
     var pillSize: CGSize = .zero
 
     private var panel: NotchPanel?
@@ -64,6 +66,7 @@ final class CopyToast: ObservableObject {
         panel.ignoresMouseEvents = true
         withAnimation(.spring(response: 0.34, dampingFraction: 0.72)) {
             self.item = item
+            stackIndex = m.stack?.count
             showID = UUID()
         }
         scheduleHide(after: 1.6)
@@ -133,7 +136,8 @@ struct CopyToastView: View {
         VStack(spacing: 0) {
             Color.clear.frame(height: t.notchHeight + 8)
             if let item = t.item {
-                CopyPill(item: item, hovering: t.hovering, pinned: ClipboardWatcher.shared?.isPinned(item) ?? false, t: t)
+                CopyPill(item: item, hovering: t.hovering, pinned: ClipboardWatcher.shared?.isPinned(item) ?? false,
+                         stackIndex: t.stackIndex, t: t)
                     .id(t.showID)
                     .background(GeometryReader { g in
                         Color.clear
@@ -156,8 +160,11 @@ struct CopyPill: View {
     let item: ClipItem
     let hovering: Bool
     let pinned: Bool
+    let stackIndex: Int?
     let t: CopyToast
     @State private var ripple = false
+
+    private var accent: Color { stackIndex != nil ? Color.orange : Color(red: 0.35, green: 0.9, blue: 0.5) }
 
     var body: some View {
         HStack(spacing: 8) {
@@ -173,9 +180,10 @@ struct CopyPill: View {
                 }
                 .transition(.opacity.combined(with: .scale(scale: 0.8, anchor: .leading)))
             } else {
-                Text("Đã chép")
+                Text(stackIndex.map { "Thêm #\($0)" } ?? "Đã chép")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Color(red: 0.35, green: 0.9, blue: 0.5))
+                    .monospacedDigit()
+                    .foregroundStyle(accent)
                     .transition(.opacity)
             }
         }
@@ -186,7 +194,7 @@ struct CopyPill: View {
         // Gợn viền xanh lan ra lúc vừa chép.
         .background(
             Capsule()
-                .stroke(Color(red: 0.35, green: 0.9, blue: 0.5).opacity(ripple ? 0 : 0.7), lineWidth: ripple ? 1 : 2)
+                .stroke(accent.opacity(ripple ? 0 : 0.7), lineWidth: ripple ? 1 : 2)
                 .scaleEffect(x: ripple ? 1.18 : 1, y: ripple ? 1.9 : 1)
                 .allowsHitTesting(false)
         )
