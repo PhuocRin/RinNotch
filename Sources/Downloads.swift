@@ -61,13 +61,16 @@ final class DownloadWatcher {
         var speed: Double = 0
         /// Lần cuối số byte thay đổi: đứng yên lâu (tạm dừng tải) thì thôi hiện.
         var lastChange: TimeInterval
+        /// Đường dẫn file nhớ lại từ lúc đang tải: lúc trình duyệt báo xong, tiến trình có khi đã mất đường dẫn.
+        var knownURL: URL?
         init(_ p: Progress) {
             progress = p
             lastBytes = p.completedUnitCount
             lastAt = ProcessInfo.processInfo.systemUptime
             lastChange = lastAt
+            knownURL = p.fileURL
         }
-        var url: URL? { progress.fileURL }
+        var url: URL? { progress.fileURL ?? knownURL }
         var operation: Progress.FileOperationKind? { progress.fileOperationKind }
         var isCopy: Bool { operation == .copying || operation == .duplicating }
         var name: String { DownloadWatcher.displayName(url) }
@@ -134,14 +137,16 @@ final class DownloadWatcher {
     private func ended(_ p: Progress) {
         guard let e = entries.removeValue(forKey: ObjectIdentifier(p)) else { return }
         let done = !p.isCancelled && (p.isFinished || p.fractionCompleted >= 0.995)
-        Diag.log("Tải về \(done ? "xong" : "dừng"): \(e.name)")
-        if done, !e.isCopy, let m = model, !m.expanded, m.keyboardLockUntil == nil {
+        let url = e.url
+        Diag.log("Tải về \(done ? "xong" : "dừng"): \(e.name) · \(url?.lastPathComponent ?? "không có đường dẫn")")
+        if done, !e.isCopy {
             let title = e.operation == .receiving ? "Đã nhận qua AirDrop" : "Đã tải xong"
-            m.showTransient(.message(symbol: "arrow.down.circle.fill", title: title,
-                                     detail: Prefs.downloadsToShelf ? "\(e.name) · đã nằm trên Kệ file" : e.name), seconds: 3)
-        }
-        if done, !e.isCopy, Prefs.downloadsToShelf {
-            addFinished(e.url, startedAt: e.started)
+            if Prefs.downloadsToShelf {
+                // Chỉ báo "đã nằm trên Kệ" khi thật sự thêm được.
+                addFinished(url, startedAt: e.started, name: e.name, title: title)
+            } else {
+                announce(title, e.name)
+            }
         }
         if entries.isEmpty {
             setSampler(fast: nil)
@@ -159,6 +164,7 @@ final class DownloadWatcher {
         var known = false
         for e in entries.values {
             let p = e.progress
+            if let u = p.fileURL { e.knownURL = u }
             let c = p.completedUnitCount
             let dt = now - e.lastAt
             if c != e.lastBytes { e.lastChange = now }
@@ -270,41 +276,62 @@ final class DownloadWatcher {
 
     /// Tìm file thật sau khi tải xong (trình duyệt đổi tên file tạm thành tên thật) rồi thêm vào Kệ.
     /// Trình duyệt đổi tên có khi trễ một chút nên thử lại vài lần.
-    private func addFinished(_ url: URL?, startedAt: TimeInterval, attempt: Int = 0) {
+    private func announce(_ title: String, _ detail: String) {
+        guard let m = model, !m.expanded, m.keyboardLockUntil == nil else { return }
+        m.showTransient(.message(symbol: "arrow.down.circle.fill", title: title, detail: detail), seconds: 3)
+    }
+
+    private func addFinished(_ url: URL?, startedAt: TimeInterval, name: String, title: String, attempt: Int = 0) {
         guard let m = model else { return }
-        if let f = Self.finalFile(for: url, since: Date().addingTimeInterval(-(ProcessInfo.processInfo.systemUptime - startedAt) - 5)) {
+        let since = Date().addingTimeInterval(-(ProcessInfo.processInfo.systemUptime - startedAt) - 5)
+        if let f = Self.finalFile(for: url, since: since) {
             m.addToShelf([f])
+            Diag.log("Tải về: đã thêm \(f.lastPathComponent) vào Kệ")
+            announce(title, "\(f.lastPathComponent) · đã nằm trên Kệ file")
             return
         }
-        guard attempt < 3 else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + [0.6, 1.5, 3.0][attempt]) {
-            MainActor.assumeIsolated { DownloadWatcher.shared.addFinished(url, startedAt: startedAt, attempt: attempt + 1) }
+        guard attempt < 4 else {
+            // Không tìm ra file: thường là RinNotch chưa có quyền vào thư mục Tải về.
+            let dir = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+            let readable = dir.map { (try? FileManager.default.contentsOfDirectory(atPath: $0.path)) != nil } ?? false
+            Diag.log("Tải về: không tìm được file để thêm vào Kệ (đọc thư mục Tải về: \(readable ? "được" : "không được"))")
+            announce(title, readable ? name : "\(name) · cho RinNotch quyền thư mục Tải về để tự thêm vào Kệ")
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + [0.4, 1.0, 2.0, 4.0][attempt]) {
+            MainActor.assumeIsolated {
+                DownloadWatcher.shared.addFinished(url, startedAt: startedAt, name: name, title: title, attempt: attempt + 1)
+            }
         }
     }
 
     private static let tempExts = [".download", ".crdownload", ".part"]
 
     private static func finalFile(for url: URL?, since: Date) -> URL? {
-        guard let url else { return nil }
         let fm = FileManager.default
-        let name = url.lastPathComponent
-        let dir = url.deletingLastPathComponent()
-        for ext in tempExts where name.lowercased().hasSuffix(ext) {
-            let cand = dir.appendingPathComponent(String(name.dropLast(ext.count)))
-            if fm.fileExists(atPath: cand.path) { return cand }
+        if let url {
+            let name = url.lastPathComponent
+            let dir = url.deletingLastPathComponent()
+            for ext in tempExts where name.lowercased().hasSuffix(ext) {
+                let cand = dir.appendingPathComponent(String(name.dropLast(ext.count)))
+                if fm.fileExists(atPath: cand.path) { return cand }
+            }
+            if !tempExts.contains(where: { name.lowercased().hasSuffix($0) }), fm.fileExists(atPath: url.path) { return url }
         }
-        if !tempExts.contains(where: { name.lowercased().hasSuffix($0) }), fm.fileExists(atPath: url.path) { return url }
-        // Chrome có khi tải với tên tạm "Unconfirmed 12345.crdownload": lấy file mới nhất vừa xuất hiện trong thư mục.
-        let keys: [URLResourceKey] = [.contentModificationDateKey, .isHiddenKey]
+        // Không rõ tên (Chrome "Unconfirmed 12345.crdownload", hoặc trình duyệt bỏ đường dẫn khi xong):
+        // lấy file vừa xuất hiện mới nhất trong thư mục (ngày thêm vào thư mục, không dựa ngày sửa của máy chủ).
+        guard let dir = url?.deletingLastPathComponent()
+                ?? fm.urls(for: .downloadsDirectory, in: .userDomainMask).first else { return nil }
+        let keys: [URLResourceKey] = [.addedToDirectoryDateKey, .creationDateKey, .contentModificationDateKey]
+        func stamp(_ f: URL) -> Date {
+            let v = try? f.resourceValues(forKeys: Set(keys))
+            return [v?.addedToDirectoryDate, v?.creationDate, v?.contentModificationDate].compactMap { $0 }.max() ?? .distantPast
+        }
         let files = (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles])) ?? []
         let fresh = files.filter { f in
-            !tempExts.contains(where: { f.lastPathComponent.lowercased().hasSuffix($0) })
-                && ((try? f.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast) >= since
+            !tempExts.contains(where: { f.lastPathComponent.lowercased().hasSuffix($0) }) && stamp(f) >= since
         }
-        return fresh.max {
-            ((try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast)
-                < ((try? $1.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast)
-        }
+        return fresh.max { stamp($0) < stamp($1) }
     }
 
     static func remainingText(_ s: Double) -> String {
