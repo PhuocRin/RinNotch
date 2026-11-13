@@ -85,7 +85,7 @@ struct ShelfChips: View {
             .background(Capsule().fill(on ? Color.white.opacity(0.24) : Color.white.opacity(0.07)))
             .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(HoverPlain())
     }
 }
 
@@ -324,7 +324,7 @@ struct LibraryView: View {
                         .modifier(GlassCapsule(tint: m.libraryTab == t ? Color.accentColor.opacity(0.55) : nil))
                         .contentShape(Capsule())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(HoverPlain())
                 }
                 Spacer(minLength: 8)
                 if m.libraryTab == .clipboard || m.libraryTab == .shelf {
@@ -633,7 +633,7 @@ struct BigNotesView: View {
                                     Text(n.date, style: .relative)
                                     Spacer()
                                     Button("Chép") { ClipboardWatcher.shared?.copyText(n.text, source: "RinNotch · Ghi chú") }
-                                        .buttonStyle(.plain).foregroundStyle(Color.accentColor)
+                                        .buttonStyle(HoverPlain()).foregroundStyle(Color.accentColor)
                                 }
                                 .font(.system(size: 10.5))
                                 .foregroundStyle(.white.opacity(0.5))

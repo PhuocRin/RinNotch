@@ -718,7 +718,7 @@ struct ClipboardView: View {
                         Button { m.clipSearch = "" } label: {
                             Image(systemName: "xmark.circle.fill").foregroundStyle(.white.opacity(0.5))
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(HoverPlain())
                     }
                 }
                 .padding(.horizontal, 9)
@@ -740,7 +740,7 @@ struct ClipboardView: View {
                         .background(Circle().fill(m.stack != nil ? Color.orange.opacity(0.22) : Color.white.opacity(0.09)))
                         .contentShape(Circle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(HoverPlain())
                 .help(m.stack != nil ? "Tắt Copy liên tục" : "Copy liên tục: copy nhiều thứ rồi ⌘V dán lần lượt (hoặc nhấn ⌃ hai lần)")
                 if m.clipFilter == .recent && !m.clips.isEmpty {
                     Button {
@@ -752,7 +752,7 @@ struct ClipboardView: View {
                             .background(Circle().fill(Color.white.opacity(0.09)))
                             .contentShape(Circle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(HoverPlain())
                     .help("Xoá lịch sử (mục đã ghim vẫn giữ)")
                 }
                 Button {
@@ -764,7 +764,7 @@ struct ClipboardView: View {
                         .background(Circle().fill(Color.white.opacity(0.09)))
                         .contentShape(Circle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(HoverPlain())
                 .help("Mở bảng lớn (\(HotkeyCenter.combo(.library)?.display ?? "⌃⇧0"))")
             }
             if items.isEmpty {
@@ -858,7 +858,7 @@ struct ClipChips: View {
                     .background(Capsule().fill(m.clipApp == a.id ? Color.white.opacity(0.24) : Color.white.opacity(0.07)))
                     .contentShape(Capsule())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(HoverPlain())
                 .help("Chỉ hiện thứ chép từ \(a.name)")
             }
         }
@@ -890,7 +890,7 @@ struct ClipChips: View {
             .background(Capsule().fill(on ? Color.white.opacity(0.24) : Color.white.opacity(0.07)))
             .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(HoverPlain())
     }
 }
 
@@ -1017,7 +1017,7 @@ struct ClipCard: View {
                     .frame(width: 16, height: 16)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(HoverPlain())
             .help(pinned ? "Bỏ ghim" : "Ghim (giữ lại lâu dài)")
         }
         .foregroundStyle(.white.opacity(0.75))

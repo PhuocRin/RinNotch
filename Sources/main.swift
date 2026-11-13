@@ -42,7 +42,7 @@ struct NotchGeometry {
 // MARK: - Dữ liệu
 
 enum Tab: String, CaseIterable, Identifiable {
-    case media, shelf, clipboard, notes, timer, system, tools, translate
+    case media, shelf, clipboard, notes, timer, system, tools, translate, windows
     var id: String { rawValue }
     /// Số trên bàn phím: ⌃⇧ + số mở thẳng mục này, hoặc bấm số khi tai thỏ đang mở.
     var number: Int { (Tab.allCases.firstIndex(of: self) ?? 0) + 1 }
@@ -56,6 +56,21 @@ enum Tab: String, CaseIterable, Identifiable {
         case .system: return "Hệ thống"
         case .tools: return "Công cụ"
         case .translate: return "Dịch nhanh"
+        case .windows: return "Cửa sổ"
+        }
+    }
+    /// Màu riêng của từng mục: chỉ tô cho icon mục đang chọn / đang rê chuột, các mục còn lại giữ màu trắng.
+    var tint: Color {
+        switch self {
+        case .media: return Color(red: 1.0, green: 0.36, blue: 0.5)
+        case .shelf: return Color(red: 0.35, green: 0.65, blue: 1.0)
+        case .clipboard: return Color(red: 0.35, green: 0.85, blue: 0.5)
+        case .notes: return Color(red: 1.0, green: 0.82, blue: 0.3)
+        case .timer: return Color(red: 1.0, green: 0.62, blue: 0.25)
+        case .system: return Color(red: 0.3, green: 0.85, blue: 0.85)
+        case .tools: return Color(red: 0.65, green: 0.7, blue: 0.8)
+        case .translate: return Color(red: 0.4, green: 0.8, blue: 1.0)
+        case .windows: return Color(red: 0.72, green: 0.55, blue: 1.0)
         }
     }
     var symbol: String {
@@ -68,6 +83,7 @@ enum Tab: String, CaseIterable, Identifiable {
         case .system: return "cpu"
         case .tools: return "wrench.and.screwdriver"
         case .translate: return "character.bubble"
+        case .windows: return "macwindow.on.rectangle"
         }
     }
 }
@@ -328,15 +344,79 @@ struct NotchShape: Shape {
 struct PillButton: ButtonStyle {
     var prominent = false
     func makeBody(configuration: Configuration) -> some View {
+        PillButtonBody(configuration: configuration, prominent: prominent)
+    }
+}
+
+/// Nút viên thuốc: rê chuột thì sáng hơn và nhích to, bấm thì lún xuống.
+private struct PillButtonBody: View {
+    let configuration: ButtonStyleConfiguration
+    let prominent: Bool
+    @State private var hovered = false
+    @Environment(\.isEnabled) private var enabled
+
+    var body: some View {
         configuration.label
             .font(.system(size: 11, weight: .semibold))
             .padding(.horizontal, 11)
             .padding(.vertical, 6)
             .background(
-                Capsule().fill(prominent ? Color.accentColor : Color.white.opacity(configuration.isPressed ? 0.24 : 0.12))
+                Capsule().fill(prominent ? Color.accentColor
+                                         : Color.white.opacity(configuration.isPressed ? 0.26 : (hovered ? 0.2 : 0.12)))
             )
+            .overlay(Capsule().strokeBorder(Color.white.opacity(hovered && enabled ? 0.2 : 0), lineWidth: 1))
+            .brightness(prominent && hovered && enabled ? 0.08 : 0)
             .foregroundStyle(.white)
+            .scaleEffect(configuration.isPressed ? 0.95 : (hovered && enabled ? 1.04 : 1))
             .contentShape(Capsule())
+            .onHover { inside in withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) { hovered = inside } }
+    }
+}
+
+/// Thay cho .plain: mọi nút trên tai thỏ đều có hiệu ứng khi rê chuột (sáng lên, nhích to) và khi bấm (lún).
+struct HoverPlain: ButtonStyle {
+    var scale: CGFloat = 1.06
+    func makeBody(configuration: Configuration) -> some View {
+        HoverPlainBody(configuration: configuration, scale: scale)
+    }
+}
+
+private struct HoverPlainBody: View {
+    let configuration: ButtonStyleConfiguration
+    let scale: CGFloat
+    @State private var hovered = false
+    @Environment(\.isEnabled) private var enabled
+
+    var body: some View {
+        configuration.label
+            .brightness(hovered && enabled ? 0.12 : 0)
+            .scaleEffect(configuration.isPressed ? 0.94 : (hovered && enabled ? scale : 1))
+            .opacity(configuration.isPressed ? 0.85 : 1)
+            .onHover { inside in withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) { hovered = inside } }
+    }
+}
+
+/// Thẻ / ô không phải nút (thẻ Công cụ, vòng Hệ thống): rê chuột thì nền sáng hơn, có viền và nhấc nhẹ.
+struct HoverCard: ViewModifier {
+    var cornerRadius: CGFloat = 14
+    var tint: Color = .white
+    @State private var hovered = false
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .strokeBorder(tint.opacity(hovered ? 0.3 : 0), lineWidth: 1))
+            .background(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .fill(Color.white.opacity(hovered ? 0.05 : 0)))
+            .scaleEffect(hovered ? 1.015 : 1)
+            .shadow(color: .black.opacity(hovered ? 0.35 : 0), radius: 8, y: 3)
+            .onHover { inside in withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) { hovered = inside } }
+    }
+}
+
+extension View {
+    func hoverCard(cornerRadius: CGFloat = 14, tint: Color = .white) -> some View {
+        modifier(HoverCard(cornerRadius: cornerRadius, tint: tint))
     }
 }
 
@@ -932,6 +1012,7 @@ struct ExpandedView: View {
                 case .system: SystemView()
                 case .tools: ToolsView(m: m)
                 case .translate: TranslateView(m: m)
+                case .windows: WindowsView(m: m)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -962,7 +1043,7 @@ struct TabBar: View {
     @State private var hover: Tab?
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 5) {
             ForEach(Tab.allCases) { t in
                 tabButton(t)
             }
@@ -978,6 +1059,7 @@ struct TabBar: View {
             HStack(spacing: 6) {
                 Image(systemName: t.symbol)
                     .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(selected || hovered ? t.tint : Color.white.opacity(0.72))
                     .scaleEffect(hovered ? 1.14 : 1)
                     .offset(y: hovered && !selected ? -1.5 : 0)
                 if selected && m.recording == nil {
@@ -986,13 +1068,14 @@ struct TabBar: View {
                 }
             }
             .frame(minWidth: 24, minHeight: 22)
-            .padding(.horizontal, 9)
+            .padding(.horizontal, 8)
             .padding(.vertical, 6)
             .background {
                 ZStack {
                     Capsule().fill(Color.white.opacity(hovered ? 0.13 : 0.06))
                     if selected {
-                        Capsule().fill(Color.white.opacity(0.15)).matchedGeometryEffect(id: "selected", in: ns)
+                        // Nền mục đang chọn ngả nhẹ theo màu của mục, trượt sang khi đổi mục.
+                        Capsule().fill(t.tint.opacity(0.2)).matchedGeometryEffect(id: "selected", in: ns)
                     }
                 }
             }
@@ -1154,7 +1237,7 @@ struct MediaView: View {
                 .frame(width: 44, height: 36)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(HoverPlain())
     }
 }
 
@@ -1218,7 +1301,7 @@ struct TimerView: View {
                                         Int(m.timer.countdownTotal) == min * 60 ? 0.24 : 0.08)))
                                     .contentShape(Capsule())
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(HoverPlain())
                             .disabled(m.timer.running)
                         }
                     }
@@ -1247,7 +1330,7 @@ struct TimerView: View {
                 .background(Capsule().fill(Color.white.opacity(m.timer.mode == mode ? 0.2 : 0.06)))
                 .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(HoverPlain())
         .disabled(m.timer.running)
     }
 }
@@ -1542,6 +1625,7 @@ struct RingTile: View {
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(RoundedRectangle(cornerRadius: 14).fill(Color.white.opacity(0.07)))
+        .hoverCard(tint: colors.first ?? .white)
     }
 }
 
@@ -1610,7 +1694,7 @@ struct ShelfView: View {
                             .background(Circle().fill(Color.white.opacity(0.09)))
                             .contentShape(Circle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(HoverPlain())
                     .help("Mở bảng lớn (\(HotkeyCenter.combo(.library)?.display ?? "⌃⇧0"))")
                 }
                 GeometryReader { geo in
@@ -2000,7 +2084,7 @@ struct NotesView: View {
                             .background(Circle().fill(Color.white.opacity(0.09)))
                             .contentShape(Circle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(HoverPlain())
                     .help("Mở bảng lớn")
                 }
             }
@@ -3629,8 +3713,8 @@ struct SettingsView: View {
                             KeyRecorder(action: a)
                         }
                     }
-                    Text(L("Bấm vào ô rồi nhấn tổ hợp mới. ⌫ để tắt phím đó, Esc để huỷ. Tai thỏ đang mở thì bấm số 1–8 để chuyển mục, Esc để thu lại.",
-                           "Click a box, then press the new keys. ⌫ turns it off, Esc cancels. While the notch is open, press 1–8 to switch sections and Esc to close."))
+                    Text(L("Bấm vào ô rồi nhấn tổ hợp mới. ⌫ để tắt phím đó, Esc để huỷ. Tai thỏ đang mở thì bấm số 1–9 để chuyển mục, Esc để thu lại.",
+                           "Click a box, then press the new keys. ⌫ turns it off, Esc cancels. While the notch is open, press 1–9 to switch sections and Esc to close."))
                         .noteText()
                 }
 
@@ -3835,7 +3919,7 @@ struct SupportView: View {
 // MARK: - Mẹo dùng
 
 enum TipTopic: String, CaseIterable, Identifiable {
-    case start, media, shelf, clipboard, notes, timer, system, tools, translate, alerts
+    case start, media, shelf, clipboard, notes, timer, system, tools, translate, windows, alerts
     var id: String { rawValue }
 
     var title: String {
@@ -3849,6 +3933,7 @@ enum TipTopic: String, CaseIterable, Identifiable {
         case .system: return L("Hệ thống", "System")
         case .tools: return L("Công cụ", "Tools")
         case .translate: return L("Dịch", "Translate")
+        case .windows: return L("Cửa sổ", "Windows")
         case .alerts: return L("Thông báo", "Alerts")
         }
     }
@@ -3864,6 +3949,7 @@ enum TipTopic: String, CaseIterable, Identifiable {
         case .system: return Tab.system.symbol
         case .tools: return Tab.tools.symbol
         case .translate: return Tab.translate.symbol
+        case .windows: return Tab.windows.symbol
         case .alerts: return "bell.badge"
         }
     }
@@ -3878,6 +3964,7 @@ enum TipTopic: String, CaseIterable, Identifiable {
         case .system: self = .system
         case .tools: self = .tools
         case .translate: self = .translate
+        case .windows: self = .windows
         }
     }
 
@@ -3889,8 +3976,8 @@ enum TipTopic: String, CaseIterable, Identifiable {
                                   "Hover over the notch to open it, move away to close. On Macs without a notch, hover the middle of the top edge.")),
             ("tray.and.arrow.down", L("Kéo file thả lên tai thỏ là mở ngay Kệ file.",
                                      "Drop a file on the notch to open the file shelf.")),
-            ("keyboard", L("⌃⇧1 → ⌃⇧8 mở thẳng từng mục (8 là Dịch nhanh), bấm lại đúng phím đó để đóng. Đang mở thì bấm số 1–8 để chuyển mục. ⌃⇧0 mở bảng lớn.",
-                          "⌃⇧1 → ⌃⇧8 open each section (8 is Translate); press it again to close. While open, press 1–8 to switch. ⌃⇧0 opens the big board.")),
+            ("keyboard", L("⌃⇧1 → ⌃⇧9 mở thẳng từng mục (8 là Dịch nhanh, 9 là Cửa sổ), bấm lại đúng phím đó để đóng. Đang mở thì bấm số 1–9 để chuyển mục. ⌃⇧0 mở bảng lớn.",
+                          "⌃⇧1 → ⌃⇧9 open each section (8 is Translate, 9 is Windows); press it again to close. While open, press 1–9 to switch. ⌃⇧0 opens the big board.")),
             ("hand.point.up.left", L("Cài đặt → Cách mở tai thỏ: Rê chuột, Phím tắt hoặc Cả hai. Đổi từng phím tắt cũng ở đó.",
                                     "Settings → How to open: Hover, Shortcut or Both. You can change each shortcut there too.")),
             ("eye.slash", L("⌥⌘N để ẩn / hiện RinNotch. Esc để thu tai thỏ lại.",
@@ -3972,8 +4059,6 @@ enum TipTopic: String, CaseIterable, Identifiable {
                       "When a countdown ends, an alert drops down with a chime.")),
         ]
         case .tools: return [
-            ("rectangle.split.2x1", L("Cửa sổ: bấm một ô để đưa cửa sổ app đang dùng sang nửa trái / phải / trên / dưới, một góc, giữa, phóng to, sang màn hình kế bên, hoặc trả lại cỡ cũ. Cần quyền Trợ năng.",
-                                     "Windows: click a tile to move the current app's window to a half, a corner, the center, maximize it, send it to the next display, or restore it. Needs Accessibility.")),
             ("eyedropper.halffull", L("Lấy mã màu: bấm rồi chọn điểm bất kỳ trên màn hình, mã HEX được chép ngay.",
                                      "Pick color: click, then choose any point on screen; the HEX code is copied.")),
             ("cup.and.saucer", L("Giữ máy thức 15 phút tới 4 giờ, hoặc tới khi tắt. Tự tắt khi pin dưới 10% hoặc khi gập máy (đổi trong Cài đặt).",
@@ -3992,6 +4077,16 @@ enum TipTopic: String, CaseIterable, Identifiable {
                              "Reading the selection needs Accessibility: System Settings → Privacy & Security → Accessibility → RinNotch.")),
             ("globe", L("Dịch bằng bộ dịch có sẵn của Mac, trên máy (macOS 15+). Lần đầu có thể cần tải gói ngôn ngữ ở Cài đặt → Chung → Ngôn ngữ & Vùng → Ngôn ngữ dịch.",
                        "Uses the Mac's built-in translator on-device (macOS 15+). You may need to download languages in Settings → General → Language & Region → Translation Languages.")),
+        ]
+        case .windows: return [
+            ("macwindow", L("Mở bằng ⌃⇧9 (hoặc số 9 khi tai thỏ đang mở). Hàng trái chỉnh cửa sổ của app đang dùng: nửa, góc, ⅓, ⅔, phóng to, giữa, sang màn hình kế bên.",
+                           "Open with ⌃⇧9 (or 9 while the notch is open). The left grid moves the current app's window: halves, corners, thirds, two-thirds, maximize, center, next display.")),
+            ("square.grid.2x2", L("Hàng phải xếp nhiều app cùng lúc: 2 app cạnh nhau hoặc trên dưới, 3 app, 3 cột, 4 góc, hoặc Xếp hết mọi cửa sổ đang mở trên màn hình. App mở gần nhất nằm bên trái / trên.",
+                                 "The right grid arranges several apps at once: 2 side by side or stacked, 3 apps, 3 columns, 4 corners, or tile every open window on the screen. The most recent app goes left / top.")),
+            ("arrow.uturn.backward", L("Trả lại: đưa các cửa sổ vừa chỉnh về đúng chỗ cũ. Thu nhỏ: cất cửa sổ đang dùng xuống Dock.",
+                                      "Restore puts the windows you just moved back. Minimize sends the current window to the Dock.")),
+            ("hand.raised", L("Cần quyền Trợ năng. macOS 15 trở lên cũng có phím Fn + ⌃ + mũi tên để xếp cửa sổ, nên RinNotch không gán thêm phím riêng cho từng kiểu.",
+                             "Needs Accessibility. macOS 15+ also has Fn + ⌃ + arrow keys for tiling, so RinNotch doesn't add its own shortcut per layout.")),
         ]
         case .system: return [
             ("gauge.with.dots.needle.33percent", L("Xem CPU, RAM, tốc độ mạng, mức nhiệt và pin.",
@@ -4042,7 +4137,7 @@ struct TipsView: View {
                         .foregroundStyle(topic == t ? Color.accentColor : Color.primary.opacity(0.75))
                         .contentShape(RoundedRectangle(cornerRadius: 12))
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(HoverPlain())
                 }
             }
 

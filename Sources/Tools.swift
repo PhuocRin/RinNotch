@@ -357,8 +357,7 @@ struct ToolsView: View {
 
     var body: some View {
         let cols = [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)]
-        VStack(spacing: 8) {
-        LazyVGrid(columns: cols, spacing: 8) {
+        LazyVGrid(columns: cols, spacing: 10) {
             card(symbol: "eyedropper.halffull", tint: .pink, title: "Lấy mã màu",
                  detail: m.lastColor.map { "Vừa lấy \($0) · đã chép" } ?? "Bấm rồi chọn điểm bất kỳ trên màn hình") {
                 if let hex = m.lastColor, let c = ClipParse.color(hex) {
@@ -406,39 +405,7 @@ struct ToolsView: View {
                 Button("Mở") { m.tab = .translate }.buttonStyle(PillButton(prominent: true))
             }
         }
-            windowCard
-        }
         .onAppear { trusted = Access.trusted }
-    }
-
-    /// Chỉnh nhanh cửa sổ của app đang dùng (cửa sổ nằm dưới tai thỏ, app đó vẫn đang được chọn).
-    private var windowCard: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "rectangle.split.2x1")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(Color.purple)
-                .frame(width: 30, height: 30)
-                .background(Circle().fill(Color.purple.opacity(0.16)))
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Cửa sổ").font(.system(size: 13, weight: .semibold))
-                Text(m.toolStatus ?? (trusted ? "Xếp cửa sổ của app đang dùng" : "Cần quyền Trợ năng"))
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(m.toolStatus != nil ? Color.orange : .white.opacity(0.55))
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 4)
-            HStack(spacing: 8) {
-                ForEach(Array(WindowLayout.rows.enumerated()), id: \.offset) { _, row in
-                    HStack(spacing: 4) {
-                        ForEach(row) { l in WindowSnapButton(layout: l, m: m) }
-                    }
-                }
-            }
-        }
-        .padding(.horizontal, 12)
-        .frame(height: 56)
-        .background(RoundedRectangle(cornerRadius: 14).fill(Color.white.opacity(0.07)))
     }
 
     private var awakeDetail: String {
@@ -452,9 +419,9 @@ struct ToolsView: View {
                                       @ViewBuilder trailing: () -> Trailing) -> some View {
         HStack(spacing: 10) {
             Image(systemName: symbol)
-                .font(.system(size: 15, weight: .semibold))
+                .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(tint)
-                .frame(width: 30, height: 30)
+                .frame(width: 34, height: 34)
                 .background(Circle().fill(tint.opacity(0.16)))
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.system(size: 13, weight: .semibold))
@@ -465,7 +432,8 @@ struct ToolsView: View {
             trailing()
         }
         .padding(.horizontal, 12)
-        .frame(height: 56)
+        .frame(height: 76)
         .background(RoundedRectangle(cornerRadius: 14).fill(Color.white.opacity(0.07)))
+        .hoverCard(tint: tint)
     }
 }

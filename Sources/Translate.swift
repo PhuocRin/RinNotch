@@ -564,7 +564,7 @@ struct TranslateView: View {
                             .background(Circle().fill(Color.white.opacity(0.09)))
                             .contentShape(Circle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(HoverPlain())
                     .help("Mở bảng lớn")
                 }
             }

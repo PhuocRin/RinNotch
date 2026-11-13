@@ -241,6 +241,6 @@ struct CopyPill: View {
             .background(Capsule().fill(Color.white.opacity(0.14)))
             .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(HoverPlain())
     }
 }

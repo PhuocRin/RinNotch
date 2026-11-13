@@ -1,5 +1,5 @@
 // RinNotch — phím tắt toàn hệ thống (đổi được trong Cài đặt).
-// Mặc định: ⌥⌘N ẩn / hiện, ⌃⇧1 → ⌃⇧8 mở thẳng từng mục (8 = Dịch nhanh).
+// Mặc định: ⌥⌘N ẩn / hiện, ⌃⇧1 → ⌃⇧9 mở thẳng từng mục (8 = Dịch nhanh, 9 = Cửa sổ).
 // Chọn ⌃⇧ + số (Phước chốt 12/11/2026): Final Cut Pro đã dùng ⌥ + số, ⌃⌥ + số, ⇧⌥ + số, ⌃⌥⌘ + số;
 // Finder dùng ⌃⌘ + số (nhóm theo); macOS dùng ⇧⌘3/4/5 và ⌃ + số.
 
@@ -91,7 +91,7 @@ struct KeyCombo: Equatable {
 
 /// Việc mà một phím tắt làm. Thứ tự này cũng là số id đăng ký với hệ thống.
 enum HotAction: String, CaseIterable, Identifiable {
-    case toggleHidden, media, shelf, clipboard, notes, timer, system, tools, translate, library
+    case toggleHidden, media, shelf, clipboard, notes, timer, system, tools, translate, windows, library
     var id: String { rawValue }
 
     var tab: Tab? { Tab(rawValue: rawValue) }
