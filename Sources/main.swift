@@ -217,6 +217,17 @@ final class NotchModel: ObservableObject {
     private var transientTimer: Timer?
     private var shelfStatusWork: DispatchWorkItem?
 
+    /// Dòng báo ngắn trong mục Công cụ (chỉnh cửa sổ không được…).
+    @Published var toolStatus: String?
+    private var toolStatusWork: DispatchWorkItem?
+    func flashToolStatus(_ text: String) {
+        toolStatus = text
+        toolStatusWork?.cancel()
+        let w = DispatchWorkItem { [weak self] in MainActor.assumeIsolated { self?.toolStatus = nil } }
+        toolStatusWork = w
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4, execute: w)
+    }
+
     func flashShelfStatus(_ text: String) {
         shelfStatus = text
         shelfStatusWork?.cancel()
@@ -3961,6 +3972,8 @@ enum TipTopic: String, CaseIterable, Identifiable {
                       "When a countdown ends, an alert drops down with a chime.")),
         ]
         case .tools: return [
+            ("rectangle.split.2x1", L("Cửa sổ: bấm một ô để đưa cửa sổ app đang dùng sang nửa trái / phải / trên / dưới, một góc, giữa, phóng to, sang màn hình kế bên, hoặc trả lại cỡ cũ. Cần quyền Trợ năng.",
+                                     "Windows: click a tile to move the current app's window to a half, a corner, the center, maximize it, send it to the next display, or restore it. Needs Accessibility.")),
             ("eyedropper.halffull", L("Lấy mã màu: bấm rồi chọn điểm bất kỳ trên màn hình, mã HEX được chép ngay.",
                                      "Pick color: click, then choose any point on screen; the HEX code is copied.")),
             ("cup.and.saucer", L("Giữ máy thức 15 phút tới 4 giờ, hoặc tới khi tắt. Tự tắt khi pin dưới 10% hoặc khi gập máy (đổi trong Cài đặt).",
