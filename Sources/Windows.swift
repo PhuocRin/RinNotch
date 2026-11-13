@@ -67,7 +67,7 @@ enum WindowLayout: String, CaseIterable, Identifiable {
     ]
 }
 
-/// Xếp nhiều app cùng lúc. App dùng gần nhất vào ô đầu (trái / trên).
+/// Xếp nhiều cửa sổ cùng lúc (tính theo cửa sổ, 2 cửa sổ Finder là 2). Cửa sổ dùng gần nhất vào ô đầu (trái / trên).
 enum MultiLayout: String, CaseIterable, Identifiable {
     case twoSide, twoStack, threeMain, threeColumns, threeRows, fourGrid, all
     var id: String { rawValue }
@@ -76,7 +76,7 @@ enum MultiLayout: String, CaseIterable, Identifiable {
         switch self {
         case .twoSide: return "2 cạnh nhau"
         case .twoStack: return "2 trên dưới"
-        case .threeMain: return "3 app"
+        case .threeMain: return "1 lớn 2 nhỏ"
         case .threeColumns: return "3 cột dọc"
         case .threeRows: return "3 hàng ngang"
         case .fourGrid: return "4 góc"
@@ -84,7 +84,7 @@ enum MultiLayout: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Số app cần; nil = mọi cửa sổ đang mở trên màn hình (tối đa 9).
+    /// Số cửa sổ cần; nil = mọi cửa sổ đang mở trên màn hình (tối đa 9).
     var count: Int? {
         switch self {
         case .twoSide, .twoStack: return 2
@@ -206,17 +206,16 @@ enum WindowSnap {
         }
         let limit = layout.count ?? 9
         var picked: [(AXUIElement, CGRect)] = []
-        var pids = Set<pid_t>()
         for c in all where screen(for: c.bounds) == s {
-            // Kiểu 2 / 3 / 4 app: mỗi app một cửa sổ (cửa sổ trên cùng của app đó). Xếp hết: mọi cửa sổ.
-            if layout != .all && pids.contains(c.pid) { continue }
+            // Tính theo cửa sổ, không theo app: 2 cửa sổ Finder là 2 ô. Cửa sổ trên cùng (dùng gần nhất) xếp trước.
             guard let ax = axWindow(pid: c.pid, bounds: c.bounds), isStandard(ax), !bool(ax, "AXFullScreen") else { continue }
-            pids.insert(c.pid)
+            // Hai cửa sổ chồng khít nhau có thể trỏ về cùng một cửa sổ: bỏ bản trùng.
+            if picked.contains(where: { CFEqual($0.0, ax) }) { continue }
             picked.append((ax, c.bounds))
             if picked.count == limit { break }
         }
         if let need = layout.count, picked.count < need {
-            m.flashToolStatus("Cần mở \(need) app trên màn hình này, đang thấy \(picked.count)")
+            m.flashToolStatus("Cần \(need) cửa sổ đang mở trên màn hình này, đang thấy \(picked.count)")
             return
         }
         guard picked.count >= (layout == .all ? 2 : 1) else {
@@ -509,7 +508,7 @@ struct WindowsView: View {
                 }
                 Rectangle().fill(Color.white.opacity(0.1)).frame(width: 1, height: 104)
                 VStack(alignment: .leading, spacing: 6) {
-                    caption("Xếp nhiều app")
+                    caption("Xếp nhiều cửa sổ")
                     ForEach([Array(MultiLayout.allCases.prefix(4)), Array(MultiLayout.allCases.dropFirst(4))], id: \.first) { row in
                         HStack(spacing: 5) {
                             ForEach(row) { l in

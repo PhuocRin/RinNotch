@@ -303,6 +303,27 @@ final class NotchModel: ObservableObject {
         for u in urls where !shelf.contains(u) { shelf.append(u) }
         saveShelf()
     }
+    /// File tải xong tự lên kệ: kệ quá 60 file thì bớt file cũ nhất (file không còn trước, rồi file trong Tải về).
+    /// Chỉ bỏ khỏi kệ, file vẫn nằm nguyên trong máy.
+    func trimShelfAfterDownload(limit: Int = 60) {
+        guard shelf.count > limit else { return }
+        var list = shelf
+        let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0].standardizedFileURL.path
+        // Lượt 1: file không còn. Lượt 2: file trong Tải về. Đi từ cũ nhất (đầu danh sách).
+        for pass in 0..<2 {
+            var i = 0
+            while list.count > limit, i < list.count {
+                let u = list[i]
+                let drop = pass == 0 ? !FileManager.default.fileExists(atPath: u.path)
+                                     : u.standardizedFileURL.path.hasPrefix(downloads + "/")
+                if drop { list.remove(at: i) } else { i += 1 }
+            }
+        }
+        guard list.count != shelf.count else { return }
+        shelfSelection.formIntersection(list)
+        shelf = list
+        saveShelf()
+    }
     func removeFromShelf(_ url: URL) { removeFromShelf([url]) }
     func removeFromShelf(_ urls: [URL]) {
         let drop = Set(urls)
@@ -325,6 +346,7 @@ final class NotchModel: ObservableObject {
 
     // Ghi chú
     func saveNotes() {
+        if notes.count > 30 { notes.removeLast(notes.count - 30) }
         let keep = Array(notes.prefix(30))
         if let data = try? JSONEncoder().encode(keep) {
             UserDefaults.standard.set(data, forKey: "notes")
@@ -1838,7 +1860,8 @@ struct ShelfView: View {
                 }
                 GeometryReader { geo in
                     ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 10) {
+                        // Lazy: kệ nhiều file thì chỉ dựng thẻ đang thấy (ảnh xem trước, thông tin file).
+                        LazyHStack(spacing: 10) {
                             // File đang tải đứng đầu hàng; tải xong tự thành file trên kệ (tắt được trong Cài đặt).
                             ForEach(m.downloadItems) { d in
                                 DownloadCard(item: d)
@@ -1920,8 +1943,9 @@ struct ShelfItem: View {
     }
 
     @ViewBuilder private var card: some View {
-        let exists = FileManager.default.fileExists(atPath: url.path)
-        let kind = ShelfKind.of(url)
+        let info = FileInfo.info(url)
+        let exists = info.exists
+        let kind = info.kind
         ZStack(alignment: .bottom) {
             FileCardThumb(url: url, size: CGSize(width: w, height: h))
             HStack(spacing: 5) {
@@ -1931,7 +1955,7 @@ struct ShelfItem: View {
                         .font(.system(size: 10.5, weight: .semibold))
                         .lineLimit(1)
                         .truncationMode(.middle)
-                    Text(FileInfo.size(url)).font(.system(size: 9)).foregroundStyle(.white.opacity(0.5))
+                    Text(info.size).font(.system(size: 9)).foregroundStyle(.white.opacity(0.5))
                 }
                 Spacer(minLength: 0)
             }
@@ -3976,6 +4000,11 @@ struct SettingsView: View {
                         }
                         .labelsHidden()
                         .frame(width: 170)
+                        // Giảm số mục thì cắt bớt lịch sử ngay (nhả RAM), không chờ lần copy sau.
+                        .onChange(of: clipLimit) { _, n in
+                            guard let m = AppDelegate.shared?.model, m.clips.count > n else { return }
+                            m.clips.removeLast(m.clips.count - n)
+                        }
                     }
                     Toggle(L("Xem trước tên trang của liên kết", "Show link titles"), isOn: $linkPreview)
                     Text(L("Bật thì RinNotch mở trang của liên kết vừa chép để lấy tên trang. Link có mã riêng (đăng nhập, đặt lại mật khẩu, huỷ đăng ký…) được bỏ qua. Lịch sử chỉ nằm trong máy, thoát app là xoá; mục đã ghim thì được giữ lại.",
@@ -4316,8 +4345,8 @@ enum TipTopic: String, CaseIterable, Identifiable {
         case .windows: return [
             ("macwindow", L("Mở bằng ⌃⇧9 (hoặc số 9 khi tai thỏ đang mở). Hàng trái chỉnh cửa sổ của app đang dùng: nửa, góc, ⅓, ⅔, phóng to, giữa, sang màn hình kế bên.",
                            "Open with ⌃⇧9 (or 9 while the notch is open). The left grid moves the current app's window: halves, corners, thirds, two-thirds, maximize, center, next display.")),
-            ("square.grid.2x2", L("Hàng phải xếp nhiều app cùng lúc: 2 app cạnh nhau hoặc trên dưới, 3 app, 3 cột, 4 góc, hoặc Xếp hết mọi cửa sổ đang mở trên màn hình. App mở gần nhất nằm bên trái / trên.",
-                                 "The right grid arranges several apps at once: 2 side by side or stacked, 3 apps, 3 columns, 4 corners, or tile every open window on the screen. The most recent app goes left / top.")),
+            ("square.grid.2x2", L("Hàng phải xếp nhiều cửa sổ cùng lúc (tính theo cửa sổ: 2 cửa sổ Finder là 2): 2 cạnh nhau hoặc trên dưới, 1 lớn 2 nhỏ, 3 cột, 3 hàng, 4 góc, hoặc Xếp hết. Cửa sổ dùng gần nhất nằm bên trái / trên.",
+                                 "The right grid arranges several windows at once (counted per window, so 2 Finder windows count as 2): 2 side by side or stacked, 1 big + 2 small, 3 columns, 3 rows, 4 corners, or tile every open window. The most recent window goes left / top.")),
             ("arrow.uturn.backward", L("Trả lại: đưa các cửa sổ vừa chỉnh về đúng chỗ cũ. Thu nhỏ: cất cửa sổ đang dùng xuống Dock.",
                                       "Restore puts the windows you just moved back. Minimize sends the current window to the Dock.")),
             ("hand.raised", L("Cần quyền Trợ năng. macOS 15 trở lên cũng có phím Fn + ⌃ + mũi tên để xếp cửa sổ, nên RinNotch không gán thêm phím riêng cho từng kiểu.",

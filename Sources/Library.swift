@@ -49,7 +49,7 @@ enum ShelfKind: String, CaseIterable {
 extension NotchModel {
     var visibleShelf: [URL] {
         guard let k = shelfKind else { return shelf }
-        return shelf.filter { ShelfKind.of($0) == k }
+        return shelf.filter { FileInfo.info($0).kind == k }
     }
 }
 
@@ -57,7 +57,7 @@ struct ShelfChips: View {
     @ObservedObject var m: NotchModel
 
     var body: some View {
-        let kinds = Dictionary(grouping: m.shelf, by: ShelfKind.of).mapValues(\.count)
+        let kinds = Dictionary(grouping: m.shelf) { FileInfo.info($0).kind }.mapValues(\.count)
         chip("Tất cả", symbol: "square.grid.2x2", count: m.shelf.count, on: m.shelfKind == nil) { m.shelfKind = nil }
         ForEach(ShelfKind.allCases, id: \.self) { k in
             if let n = kinds[k], n > 0, kinds.count > 1 {
@@ -216,7 +216,30 @@ struct ShelfMarquee: ViewModifier {
     }
 }
 
+/// Thông tin file trên kệ (còn không, cỡ, loại), nhớ 3 giây: thẻ vẽ lại nhiều lần mỗi giây thì khỏi hỏi ổ đĩa mỗi lần
+/// (file nằm trên ổ ngoài đang ngủ hoặc ổ mạng có thể làm treo vài giây).
+@MainActor
 enum FileInfo {
+    struct Entry {
+        let exists: Bool
+        let size: String
+        let kind: ShelfKind
+        let at: Date
+    }
+    private static var cache: [URL: Entry] = [:]
+
+    static func info(_ u: URL) -> Entry {
+        let now = Date()
+        if let e = cache[u], now.timeIntervalSince(e.at) < 3 { return e }
+        let e = Entry(exists: FileManager.default.fileExists(atPath: u.path), size: size(u), kind: ShelfKind.of(u), at: now)
+        if cache.count > 400 { cache.removeAll() }
+        cache[u] = e
+        return e
+    }
+
+    /// Đổi tên, xoá, nén… xong thì quên thông tin cũ.
+    static func forget() { cache.removeAll() }
+
     static func size(_ u: URL) -> String {
         var isDir: ObjCBool = false
         guard FileManager.default.fileExists(atPath: u.path, isDirectory: &isDir) else { return "Không còn" }
@@ -410,7 +433,7 @@ struct LibraryView: View {
                     ScrollView {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 186, maximum: 240), spacing: 12)], spacing: 12) {
                             ForEach(items) { item in
-                                ClipCard(item: item, m: m, selected: m.clipSelection == item.id, w: 186, h: 146, space: "bigClip")
+                                ClipCard(item: item, m: m, selected: m.clipSelection == item.id, w: 186, h: 146, space: "bigClip").equatable()
                             }
                         }
                         .padding(4)
@@ -556,19 +579,26 @@ final class LibraryWindow: NSObject, NSWindowDelegate {
             p.minSize = NSSize(width: 820, height: 460)
             p.collectionBehavior = [.moveToActiveSpace, .fullScreenNone]
             p.appearance = NSAppearance(named: .darkAqua)
-            let host = NSHostingView(rootView: LibraryView(m: m))
-            host.wantsLayer = true
-            host.layer?.backgroundColor = NSColor.clear.cgColor
-            p.contentView = host
+            p.contentView = Self.makeHost(m)
             p.setFrameAutosaveName("RinNotchBigBoard")
             if !p.setFrameUsingName("RinNotchBigBoard") { place(p) }
             panel = p
+        } else if let p = panel, p.contentView == nil {
+            // Lần đóng trước đã bỏ giao diện cho nhẹ máy: dựng lại (tự chạy hiệu ứng mở).
+            p.contentView = Self.makeHost(m)
         } else if panel?.isVisible == false {
             NotificationCenter.default.post(name: .rinLibraryWillOpen, object: nil)
         }
         closing = false
         panel?.orderFrontRegardless()
         panel?.makeKey()
+    }
+
+    private static func makeHost(_ m: NotchModel) -> NSView {
+        let host = NSHostingView(rootView: LibraryView(m: m))
+        host.wantsLayer = true
+        host.layer?.backgroundColor = NSColor.clear.cgColor
+        return host
     }
 
     /// Lần đầu: giữa màn hình đang có chuột, rộng khoảng 70% × 75%.
@@ -594,6 +624,8 @@ final class LibraryWindow: NSObject, NSWindowDelegate {
             MainActor.assumeIsolated {
                 guard let self, self.closing else { return }
                 p.orderOut(nil)
+                // Bỏ luôn giao diện khi ẩn: khỏi giữ thẻ, ảnh xem trước trong RAM và khỏi vẽ lại theo tai thỏ.
+                p.contentView = nil
                 self.closing = false
             }
         }

@@ -575,7 +575,8 @@ enum ClipStore {
             m.pins.append(c)
             added += 1
         }
-        for s in b.history {
+        // Chỉ giải mã số mục lịch sử sẽ giữ (mới nhất trước), khỏi nạp cả trăm ảnh rồi bỏ.
+        for s in b.history.sorted(by: { $0.date > $1.date }).prefix(Prefs.clipLimit) {
             guard let c = ClipStore.decode(s), !m.clips.contains(where: { $0.id == c.id || $0.sameContent(c) }) else { continue }
             m.clips.append(c)
             added += 1
@@ -913,7 +914,7 @@ struct ClipboardView: View {
                     ScrollView(.horizontal, showsIndicators: false) {
                         LazyHStack(spacing: 10) {
                             ForEach(items) { item in
-                                ClipCard(item: item, m: m, selected: m.clipSelection == item.id, space: "clipArea").id(item.id)
+                                ClipCard(item: item, m: m, selected: m.clipSelection == item.id, space: "clipArea").equatable().id(item.id)
                             }
                         }
                         // Chừa chỗ để thẻ phóng lên khi rê chuột mà không bị cắt trên dưới.
@@ -1037,22 +1038,51 @@ struct ClipChips: View {
     }
 }
 
-struct ClipCard: View {
+struct ClipCard: View, Equatable {
     static let width: CGFloat = 138
     static let height: CGFloat = 120
 
     let item: ClipItem
-    @ObservedObject var m: NotchModel
-    var selected = false
+    /// Không theo dõi model: thẻ chỉ vẽ lại khi chính các giá trị dưới đây đổi (xem ==), không phải mỗi lần
+    /// bất kỳ thứ gì trong tai thỏ đổi. Hàng thẻ (có theo dõi model) tạo lại thẻ với giá trị mới.
+    let m: NotchModel
+    let selected: Bool
     /// Cỡ thẻ: nhỏ trên tai thỏ, lớn hơn trong bảng lớn.
-    var w: CGFloat = ClipCard.width
-    var h: CGFloat = ClipCard.height
+    let w: CGFloat
+    let h: CGFloat
     /// Vùng toạ độ của khung chọn (báo vị trí thẻ để kéo khung chọn nhiều).
-    var space: String? = nil
+    let space: String?
+    private let pinned: Bool
+    private let flash: Bool
+    private let picked: Bool
+    private let picking: Bool
+    private let multiCount: Int
+    /// Thẻ đang nằm trong mục Riêng tư (đã mở khoá).
+    private let isPrivate: Bool
     @State private var hover = false
 
-    /// Thẻ đang nằm trong mục Riêng tư (đã mở khoá).
-    private var isPrivate: Bool { m.clipFilter == .vault }
+    init(item: ClipItem, m: NotchModel, selected: Bool = false, w: CGFloat = ClipCard.width, h: CGFloat = ClipCard.height,
+         space: String? = nil) {
+        self.item = item
+        self.m = m
+        self.selected = selected
+        self.w = w
+        self.h = h
+        self.space = space
+        pinned = ClipboardWatcher.shared?.isPinned(item) ?? false
+        flash = m.clipFlash == item.id
+        picked = m.clipMulti.contains(item.id)
+        picking = !m.clipMulti.isEmpty
+        multiCount = m.clipMulti.count
+        isPrivate = m.clipFilter == .vault
+    }
+
+    nonisolated static func == (a: ClipCard, b: ClipCard) -> Bool {
+        a.item.id == b.item.id && a.item.name == b.item.name && a.item.linkTitle == b.item.linkTitle
+            && a.item.date == b.item.date && a.selected == b.selected && a.w == b.w && a.h == b.h && a.space == b.space
+            && a.pinned == b.pinned && a.flash == b.flash && a.picked == b.picked && a.picking == b.picking
+            && a.multiCount == b.multiCount && a.isPrivate == b.isPrivate
+    }
 
     var body: some View {
         card.background {
@@ -1075,10 +1105,6 @@ struct ClipCard: View {
     }
 
     @ViewBuilder private var card: some View {
-        let pinned = ClipboardWatcher.shared?.isPinned(item) ?? false
-        let flash = m.clipFlash == item.id
-        let picked = m.clipMulti.contains(item.id)
-        let picking = !m.clipMulti.isEmpty
         Button {
             tap()
         } label: {
@@ -1126,7 +1152,7 @@ struct ClipCard: View {
         .onHover { h in withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) { hover = h } }
         .animation(.easeOut(duration: 0.15), value: flash)
         .contextMenu {
-            if picked && m.clipMulti.count > 1 { ClipSelectionMenu(m: m) }
+            if picked && multiCount > 1 { ClipSelectionMenu(m: m) }
             else if isPrivate { privateMenu } else { menu(pinned: pinned) }
         }
         .modifier(ClipDragModifier(item: item, enabled: !isPrivate && !picking))

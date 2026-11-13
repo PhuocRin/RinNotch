@@ -286,6 +286,7 @@ final class DownloadWatcher {
         let since = Date().addingTimeInterval(-(ProcessInfo.processInfo.systemUptime - startedAt) - 5)
         if let f = Self.finalFile(for: url, since: since) {
             m.addToShelf([f])
+            m.trimShelfAfterDownload()
             Diag.log("Tải về: đã thêm \(f.lastPathComponent) vào Kệ")
             announce(title, "\(f.lastPathComponent) · đã nằm trên Kệ file")
             return
