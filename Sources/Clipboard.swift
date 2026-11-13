@@ -1045,6 +1045,8 @@ struct ClipCard: View {
     }
 
     @ViewBuilder private var privateMenu: some View {
+        Button("🔒 Khoá Riêng tư ngay") { PrivateVault.shared.lock() }
+        Divider()
         Button("Sao chép") { PrivateVault.shared.copy(item) }
         Button("Bỏ khỏi Riêng tư (về Bộ nhớ tạm)") { PrivateVault.shared.moveOut(item) }
         Divider()
@@ -1167,7 +1169,17 @@ struct VaultChip: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .help("Bộ nhớ tạm riêng tư, khoá bằng vân tay · kéo thẻ thả vào đây để cất")
+        .help("Bộ nhớ tạm riêng tư, khoá bằng vân tay · kéo thẻ thả vào đây để cất · chuột phải để khoá ngay")
+        .contextMenu {
+            if m.privateUnlocked {
+                Button("🔒 Khoá Riêng tư ngay") { PrivateVault.shared.lock() }
+            } else {
+                Button("Mở khoá bằng vân tay") {
+                    m.clipFilter = .vault; m.clipCategory = nil; m.clipApp = nil
+                    PrivateVault.shared.unlock()
+                }
+            }
+        }
         .onHover { inside in withAnimation(HoverAnim.bounce) { hovered = inside } }
         .animation(HoverAnim.bounce, value: targeted)
         .animation(HoverAnim.bounce, value: m.privateFlash)

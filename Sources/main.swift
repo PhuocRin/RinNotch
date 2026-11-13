@@ -4170,8 +4170,8 @@ enum TipTopic: String, CaseIterable, Identifiable {
                                                 "Right-click: quick text fixes (case, remove accents, blank lines…), copy colors as HEX / RGB / HSL, open links, translate.")),
             ("square.stack.3d.up", L("Copy liên tục: nhấn ⌃ hai lần (hoặc nút chồng giấy), copy nhiều thứ, rồi mỗi lần ⌘V dán lần lượt từng thứ. Nhấn ⌃ hai lần nữa để tắt; dán hết là tự tắt.",
                                     "Paste Stack: press ⌃ twice (or the stack button), copy several things, then each ⌘V pastes the next one in order. Press ⌃ twice again to stop; it stops by itself after the last one.")),
-            ("lock.fill", L("Riêng tư: kéo thẻ thả vào nút Riêng tư (hoặc chuột phải → Chuyển vào Riêng tư). Muốn xem thì Mở khoá bằng vân tay (hoặc mật khẩu máy); tự khoá lại sau 3 phút, khi máy ngủ hoặc khoá màn hình.",
-                           "Private: drag a card onto the Private chip (or right-click → Move to Private). Unlock with Touch ID (or your Mac password) to see it; it locks again after 3 minutes, on sleep or screen lock.")),
+            ("lock.fill", L("Riêng tư: kéo thẻ thả vào nút Riêng tư (hoặc chuột phải → Chuyển vào Riêng tư). Muốn xem thì Mở khoá bằng vân tay (hoặc mật khẩu máy); tự khoá lại sau 3 phút, khi máy ngủ hoặc khoá màn hình. Chuột phải nút Riêng tư hay một thẻ riêng tư → Khoá ngay.",
+                           "Private: drag a card onto the Private chip (or right-click → Move to Private). Unlock with Touch ID (or your Mac password) to see it; it locks again after 3 minutes, on sleep or screen lock. Right-click the Private chip or a private card → Lock now.")),
             ("lock", L("Mật khẩu copy từ trình quản lý mật khẩu không được lưu. Thêm app không muốn ghi trong Cài đặt.",
                       "Passwords from password managers are never saved. Add apps to ignore in Settings.")),
         ]
@@ -5031,6 +5031,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let lib = item(L("Mở bảng lớn…", "Open Big Board…"), #selector(showLibraryAction))
         showKey(lib, .library)
         menu.addItem(lib)
+        menu.addItem(item(L("Khoá Bộ nhớ tạm riêng tư", "Lock Private Clipboard"), #selector(lockPrivate)))
         menu.addItem(.separator())
 
         menu.addItem(item(L("Cài đặt…", "Settings…"), #selector(showSettings), key: ","))
@@ -5067,6 +5068,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.expand(tab: t)
     }
 
+    @objc func lockPrivate() { PrivateVault.shared.lock() }
     @objc func showSettings() { settingsPanel.show(attention: true) }
 
     /// Bảng lớn: cửa sổ chứa hết Bộ nhớ tạm và Kệ file.
