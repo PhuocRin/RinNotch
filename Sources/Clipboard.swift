@@ -730,18 +730,7 @@ struct ClipboardView: View {
                         ClipChips(m: m)
                     }
                 }
-                Button {
-                    PasteStack.shared.toggle()
-                } label: {
-                    Image(systemName: m.stack != nil ? "square.stack.3d.up.fill" : "square.stack.3d.up")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(m.stack != nil ? Color.orange : Color.white)
-                        .frame(width: 26, height: 26)
-                        .background(Circle().fill(m.stack != nil ? Color.orange.opacity(0.22) : Color.white.opacity(0.09)))
-                        .contentShape(Circle())
-                }
-                .buttonStyle(HoverPlain())
-                .help(m.stack != nil ? "Tắt Copy liên tục" : "Copy liên tục: copy nhiều thứ rồi ⌘V dán lần lượt (hoặc nhấn ⌃ hai lần)")
+                StackToggleButton(m: m)
                 if m.clipFilter == .recent && !m.clips.isEmpty {
                     Button {
                         ClipboardWatcher.shared?.clearHistory()
@@ -1070,5 +1059,40 @@ struct ClipCard: View {
         }
         Divider()
         Button("Xoá mục này") { ClipboardWatcher.shared?.remove(item) }
+    }
+}
+
+
+/// Nút Copy liên tục: rê chuột thì nảy và hiện màu cam (đang bật thì cam sẵn) để nhìn ra ngay.
+struct StackToggleButton: View {
+    @ObservedObject var m: NotchModel
+    @State private var hovered = false
+
+    var body: some View {
+        let on = m.stack != nil
+        Button { PasteStack.shared.toggle() } label: {
+            HStack(spacing: 4) {
+                Image(systemName: on ? "square.stack.3d.up.fill" : "square.stack.3d.up")
+                    .font(.system(size: 11, weight: .bold))
+                if hovered || on {
+                    Text(on ? "Đang copy liên tục" : "Copy liên tục")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .lineLimit(1)
+                        .fixedSize()
+                        .transition(.opacity.combined(with: .scale(scale: 0.8, anchor: .leading)))
+                }
+            }
+            .foregroundStyle(on || hovered ? Color.orange : Color.white)
+            .padding(.horizontal, hovered || on ? 9 : 0)
+            .frame(minWidth: 26, minHeight: 26)
+            .background(Capsule().fill(on || hovered ? Color.orange.opacity(hovered ? 0.3 : 0.22) : Color.white.opacity(0.09)))
+            .overlay(Capsule().strokeBorder(Color.orange.opacity(hovered ? 0.6 : 0), lineWidth: 1))
+            .scaleEffect(hovered ? 1.1 : 1)
+            .shadow(color: Color.orange.opacity(hovered ? 0.45 : 0), radius: 8)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help(on ? "Tắt Copy liên tục (hoặc nhấn ⌃ hai lần)" : "Copy nhiều thứ rồi ⌘V dán lần lượt (hoặc nhấn ⌃ hai lần)")
+        .onHover { inside in withAnimation(HoverAnim.bounce) { hovered = inside } }
     }
 }

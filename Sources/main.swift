@@ -23,19 +23,29 @@ struct NotchGeometry {
     let width: CGFloat
     let height: CGFloat
 
+    /// Màn hình không tai thỏ (màn hình rời, iPad làm màn hình phụ, Mac mini…): dạng viên thuốc nổi
+    /// cách mép trên một chút, bo tròn cả bốn góc, nằm giữa thanh menu.
+    var topInset: CGFloat { hasNotch ? 0 : 3 }
+
+    /// Màn hình mặc định: màn hình có tai thỏ, không có thì màn hình chính.
     static func current() -> NotchGeometry {
         let screens = NSScreen.screens
-        let screen = screens.first(where: { $0.safeAreaInsets.top > 0 }) ?? NSScreen.main ?? screens.first
+        return of(screens.first(where: { $0.safeAreaInsets.top > 0 }) ?? NSScreen.main ?? screens.first)
+    }
+
+    static func of(_ screen: NSScreen?) -> NotchGeometry {
         guard let s = screen else {
-            return NotchGeometry(screenFrame: .zero, hasNotch: false, width: 190, height: 32)
+            return NotchGeometry(screenFrame: .zero, hasNotch: false, width: 110, height: 24)
         }
         let top = s.safeAreaInsets.top
         if top > 0, let l = s.auxiliaryTopLeftArea, let r = s.auxiliaryTopRightArea {
             let w = s.frame.width - l.width - r.width
             return NotchGeometry(screenFrame: s.frame, hasNotch: true, width: max(w, 120), height: top)
         }
+        // Viên thuốc cao vừa trong thanh menu (thanh menu ẩn thì lấy 24).
         let menuH = s.frame.maxY - s.visibleFrame.maxY
-        return NotchGeometry(screenFrame: s.frame, hasNotch: false, width: 190, height: max(menuH, 24))
+        let bar = menuH >= 20 && menuH <= 60 ? menuH : 24
+        return NotchGeometry(screenFrame: s.frame, hasNotch: false, width: 110, height: max(bar - 4, 22))
     }
 }
 
@@ -339,6 +349,26 @@ struct NotchShape: Shape {
     }
 }
 
+/// Khung tai thỏ: có tai thỏ thì vẽ NotchShape, không thì hình chữ nhật bo góc (viên thuốc). Một kiểu hình
+/// duy nhất để bán kính bo vẫn chạy mượt khi đổi trạng thái.
+struct IslandShape: Shape {
+    var pill: Bool
+    var bottomRadius: CGFloat
+    var topRadius: CGFloat
+
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(bottomRadius, topRadius) }
+        set { bottomRadius = newValue.first; topRadius = newValue.second }
+    }
+
+    func path(in r: CGRect) -> Path {
+        if pill {
+            return Path(roundedRect: r, cornerRadius: min(bottomRadius, r.height / 2, r.width / 2), style: .continuous)
+        }
+        return NotchShape(bottomRadius: bottomRadius, topRadius: topRadius).path(in: r)
+    }
+}
+
 // MARK: - Giao diện
 
 struct PillButton: ButtonStyle {
@@ -367,15 +397,21 @@ private struct PillButtonBody: View {
             .overlay(Capsule().strokeBorder(Color.white.opacity(hovered && enabled ? 0.2 : 0), lineWidth: 1))
             .brightness(prominent && hovered && enabled ? 0.08 : 0)
             .foregroundStyle(.white)
-            .scaleEffect(configuration.isPressed ? 0.95 : (hovered && enabled ? 1.04 : 1))
+            .scaleEffect(configuration.isPressed ? 0.93 : (hovered && enabled ? 1.09 : 1))
+            .shadow(color: (prominent ? Color.accentColor : Color.white).opacity(hovered && enabled ? 0.35 : 0), radius: 6)
             .contentShape(Capsule())
-            .onHover { inside in withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) { hovered = inside } }
+            .onHover { inside in withAnimation(HoverAnim.bounce) { hovered = inside } }
     }
 }
 
 /// Thay cho .plain: mọi nút trên tai thỏ đều có hiệu ứng khi rê chuột (sáng lên, nhích to) và khi bấm (lún).
+/// Nhịp nảy dùng chung cho hiệu ứng rê chuột: lò xo ít hãm nên phóng lố một chút rồi về, nhìn ra là "nảy".
+enum HoverAnim {
+    static let bounce = Animation.spring(response: 0.32, dampingFraction: 0.52)
+}
+
 struct HoverPlain: ButtonStyle {
-    var scale: CGFloat = 1.06
+    var scale: CGFloat = 1.12
     func makeBody(configuration: Configuration) -> some View {
         HoverPlainBody(configuration: configuration, scale: scale)
     }
@@ -389,10 +425,36 @@ private struct HoverPlainBody: View {
 
     var body: some View {
         configuration.label
-            .brightness(hovered && enabled ? 0.12 : 0)
-            .scaleEffect(configuration.isPressed ? 0.94 : (hovered && enabled ? scale : 1))
+            .brightness(hovered && enabled ? 0.15 : 0)
+            .scaleEffect(configuration.isPressed ? 0.92 : (hovered && enabled ? scale : 1))
             .opacity(configuration.isPressed ? 0.85 : 1)
-            .onHover { inside in withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) { hovered = inside } }
+            .onHover { inside in withAnimation(HoverAnim.bounce) { hovered = inside } }
+    }
+}
+
+struct HoverOutline: ViewModifier {
+    var cornerRadius: CGFloat = 10
+    @State private var hovered = false
+    func body(content: Content) -> some View {
+        content
+            .overlay(RoundedRectangle(cornerRadius: cornerRadius).strokeBorder(Color.white.opacity(hovered ? 0.28 : 0), lineWidth: 1))
+            .shadow(color: .white.opacity(hovered ? 0.12 : 0), radius: 6)
+            .onHover { inside in withAnimation(.easeOut(duration: 0.18)) { hovered = inside } }
+    }
+}
+
+/// Hiệu ứng nảy cho thứ không phải nút (menu Xử lý, ô chọn ngôn ngữ…).
+struct HoverPop: ViewModifier {
+    var scale: CGFloat = 1.08
+    @State private var hovered = false
+    @Environment(\.isEnabled) private var enabled
+
+    func body(content: Content) -> some View {
+        content
+            .brightness(hovered && enabled ? 0.12 : 0)
+            .scaleEffect(hovered && enabled ? scale : 1)
+            .shadow(color: .white.opacity(hovered && enabled ? 0.25 : 0), radius: 6)
+            .onHover { inside in withAnimation(HoverAnim.bounce) { hovered = inside } }
     }
 }
 
@@ -408,9 +470,9 @@ struct HoverCard: ViewModifier {
                 .strokeBorder(tint.opacity(hovered ? 0.3 : 0), lineWidth: 1))
             .background(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .fill(Color.white.opacity(hovered ? 0.05 : 0)))
-            .scaleEffect(hovered ? 1.015 : 1)
-            .shadow(color: .black.opacity(hovered ? 0.35 : 0), radius: 8, y: 3)
-            .onHover { inside in withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) { hovered = inside } }
+            .scaleEffect(hovered ? 1.035 : 1)
+            .shadow(color: .black.opacity(hovered ? 0.4 : 0), radius: 10, y: 4)
+            .onHover { inside in withAnimation(HoverAnim.bounce) { hovered = inside } }
     }
 }
 
@@ -418,6 +480,9 @@ extension View {
     func hoverCard(cornerRadius: CGFloat = 14, tint: Color = .white) -> some View {
         modifier(HoverCard(cornerRadius: cornerRadius, tint: tint))
     }
+    func hoverPop(scale: CGFloat = 1.08) -> some View { modifier(HoverPop(scale: scale)) }
+    /// Ô gõ chữ: không phóng to (khó đọc), chỉ hiện viền sáng khi rê chuột.
+    func hoverOutline(cornerRadius: CGFloat = 10) -> some View { modifier(HoverOutline(cornerRadius: cornerRadius)) }
 }
 
 struct IslandView: View {
@@ -438,13 +503,22 @@ struct IslandView: View {
         case .idle: return CGSize(width: m.notchWidth, height: m.notchHeight)
         case .compact:
             let wide = m.stack != nil || m.recording != nil || m.timerCompact || m.downloads != nil
-            return CGSize(width: m.notchWidth + (wide ? 210 : 130), height: m.notchHeight)
+            // Viên thuốc không có tai thỏ ở giữa nên hai bên đứng sát nhau hơn.
+            let gap = m.hasNotch ? m.notchWidth : 34
+            return CGSize(width: gap + (wide ? 210 : 130), height: m.notchHeight)
         case .banner: return CGSize(width: max(m.notchWidth + 170, m.keyboardLockUntil != nil ? 490 : 420), height: m.notchHeight + 78)
         case .expanded: return CGSize(width: NotchController.expandedWidth, height: m.notchHeight + NotchController.expandedHeight)
         }
     }
 
     var bottomRadius: CGFloat {
+        if !m.hasNotch {
+            switch phase {
+            case .idle, .compact: return 100   // bo hết cỡ = viên thuốc
+            case .banner: return 24
+            case .expanded: return 26
+            }
+        }
         switch phase {
         case .idle: return 9
         case .compact: return 14
@@ -453,7 +527,13 @@ struct IslandView: View {
         }
     }
 
-    var topRadius: CGFloat { phase == .idle ? 0 : 8 }
+    var topRadius: CGFloat { (phase == .idle || !m.hasNotch) ? 0 : 8 }
+
+    /// Có tai thỏ: khung ôm tai thỏ (hai tai cong ở mép trên). Không tai thỏ: viên thuốc bo tròn cả bốn góc.
+    var shape: IslandShape { IslandShape(pill: !m.hasNotch, bottomRadius: bottomRadius, topRadius: topRadius) }
+
+    /// Viên thuốc lúc rảnh trên màn hình không tai thỏ (tắt được trong Cài đặt).
+    var idleHidden: Bool { phase == .idle && !m.hasNotch && !Prefs.showIdlePill }
 
     /// Kích thước đang vẽ: chạy theo `size` bằng hai nhịp (bung: kéo ngang trước rồi mới thả xuống;
     /// thu: kéo lên trước rồi mới thu ngang), nhìn giống Dynamic Island hơn là phóng to đều.
@@ -486,10 +566,13 @@ struct IslandView: View {
         // Nội dung luôn ở đúng cỡ cuối, khung tai thỏ lớn dần và cắt bớt: chữ không bị xô lệch lúc bung.
         .frame(width: s.width + 2 * topRadius, height: s.height, alignment: .top)
         .frame(width: (w > 0 ? w : s.width) + 2 * topRadius, height: h > 0 ? h : s.height, alignment: .top)
-        .background(NotchShape(bottomRadius: bottomRadius, topRadius: topRadius).fill(Color.black))
-        .clipShape(NotchShape(bottomRadius: bottomRadius, topRadius: topRadius))
-        .shadow(color: .black.opacity(phase == .idle ? 0 : 0.45), radius: 18, x: 0, y: 8)
-        .opacity((m.hidden || (phase == .idle && !m.hasNotch)) ? 0 : 1)
+        .background(shape.fill(Color.black))
+        .clipShape(shape)
+        // Viên thuốc nằm trên thanh menu (có khi là nền tối): viền mảnh cho khỏi lẫn vào nền.
+        .overlay(shape.stroke(Color.white.opacity(m.hasNotch ? 0 : 0.16), lineWidth: 1))
+        .shadow(color: .black.opacity(phase == .idle ? (m.hasNotch ? 0 : 0.25) : 0.45), radius: phase == .idle ? 4 : 18, x: 0, y: phase == .idle ? 1 : 8)
+        .padding(.top, m.hasNotch ? 0 : 3)
+        .opacity((m.hidden || idleHidden) ? 0 : 1)
         .animation(.spring(response: 0.36, dampingFraction: 0.8), value: phase)
         .animation(.spring(response: 0.36, dampingFraction: 0.8), value: m.transient)
         .animation(.easeOut(duration: 0.2), value: m.hidden)
@@ -523,7 +606,7 @@ struct CompactView: View {
     var body: some View {
         HStack(spacing: 0) {
             leading
-            Spacer(minLength: m.notchWidth)
+            Spacer(minLength: m.hasNotch ? m.notchWidth : 34)
             trailing
         }
         .padding(.horizontal, 14)
@@ -1567,6 +1650,7 @@ struct SystemView: View {
             .padding(12)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(RoundedRectangle(cornerRadius: 14).fill(Color.white.opacity(0.07)))
+            .hoverCard(tint: .blue)
         }
         .onAppear { mon.start() }
         .onDisappear { mon.stop() }
@@ -1738,6 +1822,7 @@ struct ShelfView: View {
                     .fixedSize()
                     .padding(.horizontal, 10).padding(.vertical, 5)
                     .background(Capsule().fill(Color.white.opacity(0.12)))
+                    .hoverPop(scale: 1.09)
                     .disabled(m.shelfBusy || targets.isEmpty)
                     .help("Đổi định dạng, nén, thu nhỏ, xoá nền ảnh · gộp PDF · nén ZIP")
                     if sel.isEmpty {
@@ -2065,6 +2150,7 @@ struct NotesView: View {
                     }
                 }
                 .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.09)))
+                .hoverOutline()
                 HStack(spacing: 8) {
                     Text(m.noteStatus ?? "Lưu bằng nút Lưu hoặc ⌘ Enter")
                         .font(.system(size: 11))
@@ -3129,6 +3215,9 @@ final class NotchController {
     /// Mở bằng phím tắt: không tự thu khi chuột chưa từng vào tai thỏ.
     private var keyboardOpen = false
     private var mouseVisited = false
+    /// Màn hình tai thỏ đang nằm (nil = màn hình mặc định). Đổi khi chuột sang màn hình khác.
+    private var activeFrame: CGRect?
+    var geometry: NotchGeometry { geo }
 
     init(model: NotchModel) {
         self.model = model
@@ -3190,7 +3279,10 @@ final class NotchController {
     }
 
     func layout() {
-        geo = NotchGeometry.current()
+        let screens = NSScreen.screens
+        let target = activeFrame.flatMap { f in screens.first { $0.frame == f } }
+        if target == nil { activeFrame = nil }
+        geo = target.map { NotchGeometry.of($0) } ?? NotchGeometry.current()
         model.hasNotch = geo.hasNotch
         model.notchWidth = geo.width
         model.notchHeight = geo.height
@@ -3199,17 +3291,31 @@ final class NotchController {
             CGRect(x: f.midX - panelSize.width / 2, y: f.maxY - panelSize.height, width: panelSize.width, height: panelSize.height),
             display: true
         )
+        CopyToast.shared.layout()
+    }
+
+    /// Có nhiều màn hình (màn hình rời, iPad làm màn hình phụ): tai thỏ / viên thuốc đi theo màn hình có chuột.
+    private func followMouse(_ p: NSPoint) {
+        guard Prefs.followMouseScreen, NSScreen.screens.count > 1, !model.expanded, model.transient == nil,
+              model.keyboardLockUntil == nil, !geo.screenFrame.contains(p) else { return }
+        let screens = NSScreen.screens
+        guard let s = screens.first(where: { $0.frame.contains(p) })
+                ?? screens.first(where: { $0.frame.insetBy(dx: 0, dy: -2).contains(p) }),
+              s.frame != geo.screenFrame else { return }
+        activeFrame = s.frame
+        layout()
     }
 
     private var notchRect: CGRect {
         let f = geo.screenFrame
-        return CGRect(x: f.midX - geo.width / 2 - 8, y: f.maxY - geo.height - 6, width: geo.width + 16, height: geo.height + 6)
+        let h = geo.height + geo.topInset
+        return CGRect(x: f.midX - geo.width / 2 - 8, y: f.maxY - h - 6, width: geo.width + 16, height: h + 6)
     }
 
     private var expandedRect: CGRect {
         let f = geo.screenFrame
         let w: CGFloat = NotchController.expandedWidth + 16 + 40
-        let h = geo.height + NotchController.expandedHeight + 30
+        let h = geo.height + geo.topInset + NotchController.expandedHeight + 30
         return CGRect(x: f.midX - w / 2, y: f.maxY - h, width: w, height: h)
     }
 
@@ -3261,6 +3367,7 @@ final class NotchController {
         CopyToast.shared.mouseMoved(NSEvent.mouseLocation)
         guard !model.hidden, model.keyboardLockUntil == nil else { return }
         let p = NSEvent.mouseLocation
+        followMouse(p)
         if !model.expanded {
             guard notchRect.contains(p) else { return }
             let pressed = NSEvent.pressedMouseButtons & 1 != 0
@@ -3336,6 +3443,12 @@ final class NotchController {
         CopyToast.shared.hide()
         model.expanded = true
         panel.ignoresMouseEvents = false
+    }
+
+    /// Tắt "đi theo chuột": đưa tai thỏ về màn hình mặc định.
+    func resetScreen() {
+        activeFrame = nil
+        layout()
     }
 
     /// Khoá / mở khoá bàn phím: banner cần nhận chuột để bấm Mở khoá.
@@ -3455,6 +3568,8 @@ enum Prefs {
     static var showCopyToast: Bool { bool("showCopyToast") }
     static var showDownloads: Bool { bool("showDownloads") }
     static var stackDoubleControl: Bool { bool("stackDoubleControl") }
+    static var showIdlePill: Bool { bool("showIdlePill") }
+    static var followMouseScreen: Bool { bool("followMouseScreen") }
     static var awakeStopLowBattery: Bool { bool("awakeStopLowBattery") }
     static var awakeStopOnSleep: Bool { bool("awakeStopOnSleep") }
     static var clipLimit: Int { max(d.object(forKey: "clipLimit") as? Int ?? 50, 10) }
@@ -3666,6 +3781,8 @@ struct SettingsView: View {
     @AppStorage("showCopyToast") private var showCopyToast = true
     @AppStorage("showDownloads") private var showDownloads = true
     @AppStorage("stackDoubleControl") private var stackDoubleControl = true
+    @AppStorage("showIdlePill") private var showIdlePill = true
+    @AppStorage("followMouseScreen") private var followMouseScreen = true
     @AppStorage("defaultTab") private var defaultTab = "last"
     @AppStorage("openMode") private var openMode = OpenMode.both.rawValue
     @AppStorage("clipLimit") private var clipLimit = 50
@@ -3703,6 +3820,15 @@ struct SettingsView: View {
                             .frame(width: 170)
                         }
                     }
+                }
+
+                section(L("Nhiều màn hình, màn hình không tai thỏ", "Displays without a notch")) {
+                    Toggle(L("Đi theo màn hình có chuột (màn hình rời, iPad làm màn hình phụ)", "Follow the display with the pointer"), isOn: $followMouseScreen)
+                        .onChange(of: followMouseScreen) { AppDelegate.shared?.controller.resetScreen() }
+                    Toggle(L("Hiện viên thuốc nhỏ lúc rảnh trên màn hình không tai thỏ", "Show a small pill when idle on displays without a notch"), isOn: $showIdlePill)
+                    Text(L("Màn hình không có tai thỏ thì RinNotch hiện dạng viên thuốc nổi giữa thanh menu: rê chuột vào để mở, đủ các mục như trên MacBook. Tắt viên thuốc lúc rảnh thì rê chuột lên giữa mép trên màn hình vẫn mở được.",
+                           "On displays without a notch, RinNotch shows as a floating pill in the middle of the menu bar: hover to open, with every section. With the idle pill off, hovering the middle of the top edge still opens it."))
+                        .noteText()
                 }
 
                 section(L("Phím tắt", "Shortcuts")) {
@@ -3974,6 +4100,8 @@ enum TipTopic: String, CaseIterable, Identifiable {
         case .start: return [
             ("cursorarrow.rays", L("Rê chuột lên tai thỏ để mở, rê ra ngoài là tự thu lại. Máy không có tai thỏ thì rê lên giữa cạnh trên màn hình.",
                                   "Hover over the notch to open it, move away to close. On Macs without a notch, hover the middle of the top edge.")),
+            ("display.2", L("Màn hình không tai thỏ (màn hình rời, iPad làm màn hình phụ): RinNotch hiện viên thuốc giữa thanh menu, rê chuột vào để mở. Có nhiều màn hình thì nó đi theo màn hình có chuột.",
+                           "Displays without a notch (external monitor, iPad as a display): RinNotch shows a pill in the middle of the menu bar; hover to open. With several displays it follows the pointer.")),
             ("tray.and.arrow.down", L("Kéo file thả lên tai thỏ là mở ngay Kệ file.",
                                      "Drop a file on the notch to open the file shelf.")),
             ("keyboard", L("⌃⇧1 → ⌃⇧9 mở thẳng từng mục (8 là Dịch nhanh, 9 là Cửa sổ), bấm lại đúng phím đó để đóng. Đang mở thì bấm số 1–9 để chuyển mục. ⌃⇧0 mở bảng lớn.",

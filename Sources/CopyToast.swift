@@ -44,8 +44,9 @@ final class CopyToast: ObservableObject {
     }
 
     func layout() {
-        let g = NotchGeometry.current()
-        notchHeight = g.height
+        // Đi cùng màn hình với tai thỏ (đổi khi chuột sang màn hình khác).
+        let g = AppDelegate.shared?.controller?.geometry ?? NotchGeometry.current()
+        notchHeight = g.height + g.topInset
         let f = g.screenFrame
         panel?.setFrame(CGRect(x: f.midX - Self.panelSize.width / 2, y: f.maxY - Self.panelSize.height,
                                width: Self.panelSize.width, height: Self.panelSize.height), display: false)

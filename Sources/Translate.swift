@@ -507,6 +507,7 @@ struct TranslateView: View {
                         }
                     }
                     .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.08)))
+                    .hoverOutline()
                 }
                 Image(systemName: "arrow.right").font(.system(size: 12, weight: .bold)).foregroundStyle(.white.opacity(0.4))
                     .padding(.top, 60)
@@ -517,6 +518,7 @@ struct TranslateView: View {
                     .labelsHidden()
                     .controlSize(.small)
                     .frame(maxWidth: 190, alignment: .leading)
+                    .hoverPop(scale: 1.05)
                     .onChange(of: t.target) { t.translate() }
                     ZStack(alignment: .topLeading) {
                         ScrollView(.vertical, showsIndicators: false) {
@@ -535,6 +537,7 @@ struct TranslateView: View {
                         }
                     }
                     .background(RoundedRectangle(cornerRadius: 10).fill(Color.accentColor.opacity(0.14)))
+                    .hoverOutline()
                 }
             }
             .frame(maxHeight: .infinity)
