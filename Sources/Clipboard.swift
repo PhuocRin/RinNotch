@@ -545,7 +545,7 @@ enum ClipStore {
             Diag.log("File ghim đọc không được, đã đổi tên thành \(bad.lastPathComponent)")
             return []
         }
-        return list.compactMap(decode)
+        return list.compactMap { decode($0) }
     }
 
     /// Xuất ghim + lịch sử ra một file .rinnotchclip (ảnh nằm luôn trong file).
