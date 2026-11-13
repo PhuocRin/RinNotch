@@ -196,7 +196,6 @@ final class NotchModel: ObservableObject {
     }
     @Published var transient: Transient?
     @Published var recording: RecordingInfo?
-    @Published var levels: [CGFloat] = Array(repeating: 0.08, count: 14)
     @Published var hidden = false
     @Published var hasNotch = true
     @Published var notchWidth: CGFloat = 190
@@ -298,12 +297,6 @@ final class NotchModel: ObservableObject {
         }
     }
 
-    func pushLevel(_ v: CGFloat) {
-        var l = levels
-        l.removeFirst()
-        l.append(v)
-        levels = l
-    }
 
     // Kệ file
     func addToShelf(_ urls: [URL]) {
@@ -416,7 +409,7 @@ private struct PillButtonBody: View {
             .brightness(prominent && hovered && enabled ? 0.08 : 0)
             .foregroundStyle(.white)
             .scaleEffect(configuration.isPressed ? 0.93 : (hovered && enabled ? 1.09 : 1))
-            .shadow(color: (prominent ? Color.accentColor : Color.white).opacity(hovered && enabled ? 0.35 : 0), radius: 6)
+            .shadow(color: (prominent ? Color.accentColor : Color.white).opacity(hovered && enabled ? 0.35 : 0), radius: hovered && enabled ? 6 : 0)
             .contentShape(Capsule())
             .onHover { inside in withAnimation(HoverAnim.bounce) { hovered = inside } }
     }
@@ -456,7 +449,7 @@ struct HoverOutline: ViewModifier {
     func body(content: Content) -> some View {
         content
             .overlay(RoundedRectangle(cornerRadius: cornerRadius).strokeBorder(Color.white.opacity(hovered ? 0.28 : 0), lineWidth: 1))
-            .shadow(color: .white.opacity(hovered ? 0.12 : 0), radius: 6)
+            .shadow(color: .white.opacity(hovered ? 0.12 : 0), radius: hovered ? 6 : 0)
             .onHover { inside in withAnimation(.easeOut(duration: 0.18)) { hovered = inside } }
     }
 }
@@ -471,7 +464,7 @@ struct HoverPop: ViewModifier {
         content
             .brightness(hovered && enabled ? 0.12 : 0)
             .scaleEffect(hovered && enabled ? scale : 1)
-            .shadow(color: .white.opacity(hovered && enabled ? 0.25 : 0), radius: 6)
+            .shadow(color: .white.opacity(hovered && enabled ? 0.25 : 0), radius: hovered && enabled ? 6 : 0)
             .onHover { inside in withAnimation(HoverAnim.bounce) { hovered = inside } }
     }
 }
@@ -489,7 +482,7 @@ struct HoverCard: ViewModifier {
             .background(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .fill(Color.white.opacity(hovered ? 0.05 : 0)))
             .scaleEffect(hovered ? 1.035 : 1)
-            .shadow(color: .black.opacity(hovered ? 0.4 : 0), radius: 10, y: 4)
+            .shadow(color: .black.opacity(hovered ? 0.4 : 0), radius: hovered ? 10 : 0, y: hovered ? 4 : 0)
             .onHover { inside in withAnimation(HoverAnim.bounce) { hovered = inside } }
     }
 }
@@ -589,7 +582,13 @@ struct IslandView: View {
         .clipShape(shape)
         // Viên thuốc nằm trên thanh menu (có khi là nền tối): viền mảnh cho khỏi lẫn vào nền.
         .overlay(shape.stroke(Color.white.opacity(m.hasNotch ? 0 : 0.16), lineWidth: 1))
-        .shadow(color: .black.opacity(phase == .idle ? (m.hasNotch ? 0 : 0.25) : 0.45), radius: phase == .idle ? 4 : 18, x: 0, y: phase == .idle ? 1 : 8)
+        // Bóng đổ vẽ từ riêng hình nền (nằm ngoài vùng cắt), không phải từ cả khối nội dung:
+        // nội dung đổi (rê chuột, cuộn, nảy) thì hệ thống khỏi tính lại bóng cho cả khối.
+        .background(
+            shape.fill(Color.black)
+                .shadow(color: .black.opacity(phase == .idle ? (m.hasNotch ? 0 : 0.25) : 0.45),
+                        radius: phase == .idle ? 4 : 18, x: 0, y: phase == .idle ? 1 : 8)
+        )
         .padding(.top, m.hasNotch ? 0 : 3)
         .opacity((m.hidden || idleHidden) ? 0 : 1)
         .animation(.spring(response: 0.36, dampingFraction: 0.8), value: phase)
@@ -681,7 +680,7 @@ struct CompactView: View {
                 .animation(.spring(response: 0.3), value: m.stackPasted)
                 .animation(.spring(response: 0.3), value: s.count)
         } else if m.recording != nil {
-            Waveform(levels: m.levels)
+            LiveWaveform()
         } else if m.timerCompact {
             if m.timer.mode == .countdown {
                 TimelineView(.periodic(from: .now, by: 0.5)) { ctx in
@@ -1006,7 +1005,7 @@ struct RecordingBadge: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            if let icon = NSRunningApplication(processIdentifier: info.pid)?.icon {
+            if let icon = Self.icon(info.pid) {
                 Image(nsImage: icon).resizable().frame(width: 18, height: 18)
             }
             if info.paused {
@@ -1037,11 +1036,44 @@ struct RecordingBadge: View {
         .help(info.paused ? "\(info.appName) đang tạm dừng" : "\(info.appName) đang dùng micro")
     }
 
+    /// Icon app đang ghi, nhớ theo pid (khỏi hỏi hệ thống mỗi lần vẽ lại).
+    private static var icons: [pid_t: NSImage] = [:]
+    private static func icon(_ pid: pid_t) -> NSImage? {
+        if let i = icons[pid] { return i }
+        guard let i = NSRunningApplication(processIdentifier: pid)?.icon else { return nil }
+        if icons.count > 20 { icons.removeAll() }
+        icons[pid] = i
+        return i
+    }
+
     static func format(_ t: TimeInterval) -> String {
         let s = max(0, Int(t))
         return s >= 3600 ? String(format: "%d:%02d:%02d", s / 3600, (s % 3600) / 60, s % 60)
                          : String(format: "%d:%02d", s / 60, s % 60)
     }
+}
+
+/// Mức âm micro, tách khỏi NotchModel: cập nhật nhiều lần mỗi giây nên chỉ sóng âm theo dõi nó,
+/// không làm cả tai thỏ (thẻ Bộ nhớ tạm, Kệ file…) vẽ lại theo.
+@MainActor
+final class LevelMeter: ObservableObject {
+    static let shared = LevelMeter()
+    static let idle: [CGFloat] = Array(repeating: 0.08, count: 14)
+    @Published private(set) var levels: [CGFloat] = LevelMeter.idle
+
+    func push(_ v: CGFloat) {
+        var l = levels
+        l.removeFirst()
+        l.append(v)
+        levels = l
+    }
+
+    func reset() { if levels != Self.idle { levels = Self.idle } }
+}
+
+struct LiveWaveform: View {
+    @ObservedObject private var meter = LevelMeter.shared
+    var body: some View { Waveform(levels: meter.levels) }
 }
 
 struct Waveform: View {
@@ -1184,7 +1216,7 @@ struct TabBar: View {
                 }
             }
             .overlay(Capsule().strokeBorder(Color.white.opacity(hovered ? 0.22 : 0), lineWidth: 1))
-            .shadow(color: .white.opacity(hovered ? 0.12 : 0), radius: 6)
+            .shadow(color: .white.opacity(hovered ? 0.12 : 0), radius: hovered ? 6 : 0)
             .foregroundStyle(.white.opacity(selected || hovered ? 1 : 0.72))
             .contentShape(Capsule())
         }
@@ -1757,7 +1789,8 @@ struct ShelfView: View {
     /// Chừa chỗ quanh hàng thẻ để thẻ phóng lên khi rê chuột không bị cắt.
     static let rowPad: CGFloat = 6
     /// Khung chọn dùng chung: kéo từ chỗ trống ở hàng nút lọc xuống hàng thẻ cũng được.
-    @StateObject private var marquee = MarqueeState()
+    // Giữ khung chọn mà không theo dõi nó: kéo khung chỉ vẽ lại phần khung, không vẽ lại cả hàng thẻ.
+    @State private var marquee = MarqueeState()
 
     var body: some View {
         if m.shelf.isEmpty && m.downloadItems.isEmpty {
@@ -1904,7 +1937,7 @@ struct ShelfItem: View {
             }
             .padding(.horizontal, 7)
             .padding(.vertical, 4)
-            .background(.ultraThinMaterial)
+            .background(Color(white: 0.1).opacity(0.82))
             .environment(\.colorScheme, .dark)
         }
         .frame(width: w, height: h)
@@ -1932,7 +1965,7 @@ struct ShelfItem: View {
             }
         }
         .scaleEffect(m.shelfHover == url ? 1.03 : 1)
-        .shadow(color: .black.opacity(m.shelfHover == url ? 0.4 : 0), radius: 8, y: 3)
+        .shadow(color: .black.opacity(m.shelfHover == url ? 0.4 : 0), radius: m.shelfHover == url ? 8 : 0, y: m.shelfHover == url ? 3 : 0)
         .animation(.spring(response: 0.25, dampingFraction: 0.8), value: selected)
         .animation(.spring(response: 0.25, dampingFraction: 0.8), value: m.shelfHover == url)
         .opacity(exists ? 1 : 0.45)
@@ -2665,7 +2698,7 @@ final class RecordingWatcher {
             meterRetryAfter = Date().addingTimeInterval(30)
             return
         }
-        input.installTap(onBus: 0, bufferSize: 1024, format: fmt, block: RecordingWatcher.makeTap(self))
+        input.installTap(onBus: 0, bufferSize: 4096, format: fmt, block: RecordingWatcher.makeTap(self))
         do {
             try e.start()
             engine = e
@@ -2680,7 +2713,13 @@ final class RecordingWatcher {
     /// Tạo block chạy trên luồng âm thanh (không gắn với luồng chính).
     nonisolated static func makeTap(_ owner: RecordingWatcher) -> AVAudioNodeTapBlock {
         weak var w = owner
+        // Lọc ngay trên luồng âm thanh: tối đa ~15 lần/giây mới nhảy sang luồng chính.
+        final class Gate: @unchecked Sendable { var last: UInt64 = 0 }
+        let gate = Gate()
         return { buf, _ in
+            let now = DispatchTime.now().uptimeNanoseconds
+            guard now &- gate.last > 66_000_000 else { return }
+            gate.last = now
             guard let ch = buf.floatChannelData else { return }
             let n = Int(buf.frameLength)
             guard n > 0 else { return }
@@ -2696,7 +2735,7 @@ final class RecordingWatcher {
             let db = 20 * log10(max(rms, 0.000_001))
             // -60 dB (im lặng) → 0, -12 dB (nói to) → 1
             let level = CGFloat(min(max((db + 60) / 48, 0.04), 1))
-            Task { @MainActor in w?.push(level) }
+            DispatchQueue.main.async { MainActor.assumeIsolated { w?.push(level) } }
         }
     }
 
@@ -2710,7 +2749,9 @@ final class RecordingWatcher {
         }
         guard now.timeIntervalSince(lastPush) > 0.05 else { return }
         lastPush = now
-        m.pushLevel(v)
+        // Sóng âm chỉ hiện khi tai thỏ thu gọn: đang bung thì khỏi cập nhật.
+        guard !m.expanded else { return }
+        LevelMeter.shared.push(v)
     }
 
     private func stopMeter() {
@@ -2718,7 +2759,7 @@ final class RecordingWatcher {
         engine?.inputNode.removeTap(onBus: 0)
         engine?.stop()
         engine = nil
-        m.levels = Array(repeating: 0.08, count: 14)
+        LevelMeter.shared.reset()
     }
 }
 
@@ -2726,10 +2767,13 @@ final class RecordingWatcher {
 @MainActor
 enum Diag {
     static var lines: [String] = []
-    static func log(_ s: String) {
+    private static let time: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "HH:mm:ss"
-        lines.append("\(f.string(from: Date()))  \(s)")
+        return f
+    }()
+    static func log(_ s: String) {
+        lines.append("\(time.string(from: Date()))  \(s)")
         if lines.count > 80 { lines.removeFirst(lines.count - 80) }
     }
 }
@@ -2924,8 +2968,17 @@ final class MediaHub {
         usingApp = useApp
         let np = useApp ? app : system
         let art = useApp ? appArt : systemArt
-        if m.nowPlaying != np { m.nowPlaying = np }
+        if m.nowPlaying != np && !Self.sameMoment(m.nowPlaying, np) { m.nowPlaying = np }
         if m.artwork !== art { m.artwork = art }
+    }
+
+    /// Cùng bài, cùng trạng thái, vị trí đang phát lệch dưới 1,5 giây: chỉ khác mốc thời gian (trình đọc hỏi lại
+    /// mỗi 3 giây, app không gửi mốc thì lấy giờ hiện tại). Bỏ qua để cả tai thỏ khỏi vẽ lại mỗi 3 giây.
+    private static func sameMoment(_ a: NowPlaying?, _ b: NowPlaying?) -> Bool {
+        guard let a, let b, a.title == b.title, a.artist == b.artist, a.album == b.album, a.duration == b.duration,
+              a.rate == b.rate, a.playing == b.playing, a.pid == b.pid else { return false }
+        let now = Date()
+        return abs(a.position(at: now) - b.position(at: now)) < 1.5
     }
 
     func command(_ cmd: String) {
@@ -3505,10 +3558,13 @@ final class NotchController {
             if typing && expandedRect.contains(NSEvent.mouseLocation) { return }
             if panel.isKeyWindow && model.tab == .notes && !model.noteDraft.isEmpty { return }
         }
+        // Rê chuột bên ngoài thì sự kiện tới liên tục: đã hẹn thu lại rồi thì thôi, khỏi tạo hẹn mới mỗi lần.
+        if !force, let pending = collapseWork, !pending.isCancelled { return }
         collapseWork?.cancel()
         let w = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {
                 guard let self else { return }
+                self.collapseWork = nil
                 if !force && self.expandedRect.contains(NSEvent.mouseLocation) { return }
                 self.collapse()
             }

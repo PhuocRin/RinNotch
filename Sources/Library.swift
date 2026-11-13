@@ -300,8 +300,10 @@ struct GlassCapsule: ViewModifier {
 struct LibraryView: View {
     @ObservedObject var m: NotchModel
     @State private var shelfSearch = ""
-    @StateObject private var bigMarquee = MarqueeState()
-    @StateObject private var clipMarquee = ClipMarqueeState()
+    // Giữ khung chọn mà không theo dõi nó: kéo khung chỉ vẽ lại phần khung, không vẽ lại cả hàng thẻ.
+    @State private var bigMarquee = MarqueeState()
+    // Giữ khung chọn mà không theo dõi nó: kéo khung chỉ vẽ lại phần khung, không vẽ lại cả hàng thẻ.
+    @State private var clipMarquee = ClipMarqueeState()
 
     @State private var appeared = false
 

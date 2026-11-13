@@ -106,7 +106,7 @@ final class PrivateVault {
         var bad = failed
         var list: [ClipItem] = []
         for d in plains {
-            if let stored = try? JSONDecoder().decode(StoredClip.self, from: d), let item = ClipStore.decode(stored) {
+            if let stored = try? JSONDecoder().decode(StoredClip.self, from: d), let item = ClipStore.decode(stored, persistImages: false) {
                 list.append(item)
             } else {
                 bad += 1

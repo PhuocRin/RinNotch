@@ -210,7 +210,7 @@ struct CopyPill: View {
     @ViewBuilder private var preview: some View {
         switch item.kind {
         case .image(let img):
-            Image(nsImage: img).resizable().aspectRatio(contentMode: .fill)
+            Image(nsImage: img.thumb).resizable().aspectRatio(contentMode: .fill)
                 .frame(width: 22, height: 18).clipShape(RoundedRectangle(cornerRadius: 4))
             Text(item.preview).font(.system(size: 12, weight: .medium)).lineLimit(1)
         case .files(let urls):

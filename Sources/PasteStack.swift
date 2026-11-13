@@ -102,6 +102,7 @@ final class PasteStack {
         guard let m = model, let s = m.stack else { return }
         let pasted = m.stackPasted
         snapshots.removeAll()
+        snapshotBytes = 0
         m.stack = nil
         m.stackPasted = 0
         Diag.log("Copy liên tục: tắt (\(pasted)/\(s.count))")
@@ -121,8 +122,17 @@ final class PasteStack {
     func collect(_ item: ClipItem) {
         guard let m = model, m.stack != nil else { return }
         m.stack?.append(item)
-        snapshots[item.id] = Self.snapshot()
+        // Giới hạn RAM: tổng bản chụp tối đa ~150 MB; vượt thì mục đó dán dạng thường (chữ / ảnh / file).
+        if let snap = Self.snapshot() {
+            let size = snap.reduce(0) { $0 + $1.values.reduce(0) { $0 + $1.count } }
+            if snapshotBytes + size <= 150_000_000 {
+                snapshots[item.id] = snap
+                snapshotBytes += size
+            }
+        }
     }
+
+    private var snapshotBytes = 0
 
     /// Bản chụp đầy đủ bộ nhớ tạm lúc copy (chữ có định dạng, link, ảnh…), chỉ giữ trong RAM khi Copy liên tục đang bật.
     private var snapshots: [UUID: [[NSPasteboard.PasteboardType: Data]]] = [:]
@@ -134,7 +144,10 @@ final class PasteStack {
         var out: [[NSPasteboard.PasteboardType: Data]] = []
         for it in items {
             var dict: [NSPasteboard.PasteboardType: Data] = [:]
-            for t in it.types {
+            let types = it.types
+            for t in types {
+                // Có PNG thì bỏ TIFF (thường nặng gấp nhiều lần, chưa nén).
+                if t == .tiff && types.contains(.png) { continue }
                 // Bỏ các kiểu đánh dấu tạm của hệ thống / trình quản lý bộ nhớ tạm.
                 if t.rawValue.hasPrefix("dyn.") || t.rawValue.hasPrefix("org.nspasteboard.") { continue }
                 guard let d = it.data(forType: t) else { continue }
@@ -171,7 +184,12 @@ final class PasteStack {
         // Vừa ⌘C xong bấm ⌘V liền: lấy ngay mục mới chưa kịp ghi.
         ClipboardWatcher.shared?.checkNow()
         guard let s = m.stack, m.stackPasted < s.count else { return }
-        write(s[m.stackPasted])
+        let next = s[m.stackPasted]
+        write(next)
+        // Dán rồi thì bỏ bản chụp, nhả RAM ngay.
+        if let snap = snapshots.removeValue(forKey: next.id) {
+            snapshotBytes -= snap.reduce(0) { $0 + $1.values.reduce(0) { $0 + $1.count } }
+        }
         m.stackPasted += 1
         if m.stackPasted >= s.count {
             // Để app kia đọc xong bộ nhớ tạm rồi mới tắt.

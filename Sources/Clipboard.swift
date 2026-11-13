@@ -5,13 +5,126 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 import LinkPresentation
+import ImageIO
 
 // MARK: - Dữ liệu
 
 enum ClipKind {
     case text(String)
     case files([URL])
-    case image(NSImage)
+    case image(ClipImage)
+}
+
+/// Ảnh trong Bộ nhớ tạm. RAM chỉ giữ ảnh nhỏ (tối đa 480 px) để hiện thẻ; ảnh gốc ghi ra file tạm dạng PNG
+/// (mục riêng tư thì giữ dữ liệu nén trong RAM, không ghi ra ổ). Ảnh chụp màn hình 5K giải nén ~60 MB,
+/// giữ nguyên như trước thì 50 mục có thể ngốn vài GB.
+final class ClipImage: @unchecked Sendable {
+    let thumb: NSImage
+    let pixelWidth: Int
+    let pixelHeight: Int
+    private let lock = NSLock()
+    private var file: URL?
+    private var data: Data?
+    /// File tạm là của mục này: không còn ai giữ mục thì xoá file.
+    private let ownsFile: Bool
+
+    static let cacheDir: URL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("com.phuocrin.rinnotch/clips", isDirectory: true)
+
+    /// Lịch sử không giữ qua lần mở app: dọn file tạm cũ lúc khởi động.
+    static func clearCache() { try? FileManager.default.removeItem(at: cacheDir) }
+
+    private init(thumb: NSImage, w: Int, h: Int, file: URL?, data: Data?, ownsFile: Bool) {
+        self.thumb = thumb
+        pixelWidth = w
+        pixelHeight = h
+        self.file = file
+        self.data = data
+        self.ownsFile = ownsFile
+    }
+
+    deinit {
+        if ownsFile, let file { try? FileManager.default.removeItem(at: file) }
+    }
+
+    /// Từ dữ liệu ảnh (bộ nhớ tạm, bản giải mã). `persist`: ghi PNG ra file tạm ở luồng nền rồi nhả dữ liệu khỏi RAM.
+    static func make(data: Data, persist: Bool) -> ClipImage? {
+        guard let src = CGImageSourceCreateWithData(data as CFData, nil), let t = thumbnail(src) else { return nil }
+        let ci = ClipImage(thumb: t.0, w: t.1, h: t.2, file: nil, data: data, ownsFile: persist)
+        if persist { ci.persistInBackground() }
+        return ci
+    }
+
+    /// Ảnh của mục ghim (file nằm sẵn trong thư mục ghim, không phải file tạm).
+    static func make(file: URL) -> ClipImage? {
+        guard let src = CGImageSourceCreateWithURL(file as CFURL, nil), let t = thumbnail(src) else { return nil }
+        return ClipImage(thumb: t.0, w: t.1, h: t.2, file: file, data: nil, ownsFile: false)
+    }
+
+    private static func thumbnail(_ src: CGImageSource) -> (NSImage, Int, Int)? {
+        let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any]
+        let opts: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: 480,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+        ]
+        guard let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary) else { return nil }
+        let w = props?[kCGImagePropertyPixelWidth] as? Int ?? cg.width
+        let h = props?[kCGImagePropertyPixelHeight] as? Int ?? cg.height
+        return (NSImage(cgImage: cg, size: NSSize(width: CGFloat(cg.width) / 2, height: CGFloat(cg.height) / 2)), w, h)
+    }
+
+    private func persistInBackground() {
+        let name = UUID().uuidString + ".png"
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self else { return }
+            self.lock.lock(); let d = self.data; self.lock.unlock()
+            guard let d, let png = Self.png(from: d) else { return }
+            try? FileManager.default.createDirectory(at: Self.cacheDir, withIntermediateDirectories: true)
+            let url = Self.cacheDir.appendingPathComponent(name)
+            guard (try? png.write(to: url)) != nil else { return }
+            self.lock.lock(); self.file = url; self.data = nil; self.lock.unlock()
+        }
+    }
+
+    /// Đổi dữ liệu ảnh bất kỳ (TIFF, JPEG…) thành PNG; sẵn PNG thì giữ nguyên.
+    private static func png(from d: Data) -> Data? {
+        if d.starts(with: [0x89, 0x50, 0x4E, 0x47]) { return d }
+        guard let src = CGImageSourceCreateWithData(d as CFData, nil),
+              let cg = CGImageSourceCreateImageAtIndex(src, 0, nil) else { return nil }
+        let out = NSMutableData()
+        guard let dst = CGImageDestinationCreateWithData(out, UTType.png.identifier as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(dst, cg, nil)
+        return CGImageDestinationFinalize(dst) ? out as Data : nil
+    }
+
+    /// Ảnh gốc dạng PNG (đọc từ file tạm, chỉ khi cần: chép lại, ghim, cất Riêng tư).
+    func pngData() -> Data? {
+        lock.lock(); let f = file, d = data; lock.unlock()
+        if let f, let fd = try? Data(contentsOf: f) { return fd }
+        if let d { return Self.png(from: d) }
+        return nil
+    }
+
+    /// Ghi ảnh gốc ra một file (ghim): có sẵn file thì chép file, khỏi mã hoá lại.
+    func write(to url: URL) -> Bool {
+        lock.lock(); let f = file; lock.unlock()
+        if let f, (try? FileManager.default.copyItem(at: f, to: url)) != nil { return true }
+        guard let d = pngData() else { return false }
+        return (try? d.write(to: url)) != nil
+    }
+
+    /// Đặt ảnh gốc lên bộ nhớ tạm: PNG kèm TIFF (vài app cũ chỉ đọc TIFF).
+    func put(on pb: NSPasteboard) {
+        guard let png = pngData() else { return }
+        let item = NSPasteboardItem()
+        item.setData(png, forType: .png)
+        if let tiff = NSBitmapImageRep(data: png)?.tiffRepresentation(using: .lzw, factor: 0) {
+            item.setData(tiff, forType: .tiff)
+        }
+        pb.writeObjects([item])
+    }
 }
 
 enum ClipCategory: String, CaseIterable {
@@ -81,8 +194,7 @@ struct ClipItem: Identifiable {
         case .files(let urls):
             return urls.count == 1 ? urls[0].lastPathComponent : "\(urls.count) file: \(urls[0].lastPathComponent)…"
         case .image(let img):
-            let r = img.representations.first
-            let w = r?.pixelsWide ?? Int(img.size.width), h = r?.pixelsHigh ?? Int(img.size.height)
+            let w = img.pixelWidth, h = img.pixelHeight
             return w > 0 ? "Hình ảnh \(w) × \(h)" : "Hình ảnh"
         }
     }
@@ -363,11 +475,6 @@ enum ClipStore {
     private static var imagesDir: URL { dir.appendingPathComponent("images", isDirectory: true) }
     private static var pinsFile: URL { dir.appendingPathComponent("pins.json") }
 
-    static func pngData(_ img: NSImage) -> Data? {
-        guard let tiff = img.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff) else { return nil }
-        return rep.representation(using: .png, properties: [:])
-    }
-
     static func encode(_ c: ClipItem, inlineImage: Bool) -> StoredClip? {
         var s = StoredClip(id: c.id, date: c.date, sourceID: c.sourceID, sourceName: c.sourceName, linkTitle: c.linkTitle, name: c.name, type: "text")
         switch c.kind {
@@ -376,15 +483,14 @@ enum ClipStore {
         case .image(let img):
             s.type = "image"
             if inlineImage {
-                guard let d = pngData(img) else { return nil }
+                guard let d = img.pngData() else { return nil }
                 s.imageData = d
             } else {
                 let name = c.id.uuidString + ".png"
                 let url = imagesDir.appendingPathComponent(name)
                 if !FileManager.default.fileExists(atPath: url.path) {
-                    guard let d = pngData(img) else { return nil }
                     try? FileManager.default.createDirectory(at: imagesDir, withIntermediateDirectories: true)
-                    guard (try? d.write(to: url)) != nil else { return nil }
+                    guard img.write(to: url) else { return nil }
                 }
                 s.imageFile = name
             }
@@ -392,7 +498,8 @@ enum ClipStore {
         return s
     }
 
-    static func decode(_ s: StoredClip) -> ClipItem? {
+    /// `persistImages`: ảnh nằm sẵn trong dữ liệu thì ghi ra file tạm (sao lưu); mục riêng tư thì không ghi ra ổ.
+    static func decode(_ s: StoredClip, persistImages: Bool = true) -> ClipItem? {
         let kind: ClipKind
         switch s.type {
         case "text":
@@ -402,8 +509,8 @@ enum ClipStore {
             guard let p = s.paths, !p.isEmpty else { return nil }
             kind = .files(p.map { URL(fileURLWithPath: $0) })
         case "image":
-            if let d = s.imageData, let img = NSImage(data: d) { kind = .image(img) }
-            else if let f = s.imageFile, let img = NSImage(contentsOf: imagesDir.appendingPathComponent(f)) { kind = .image(img) }
+            if let d = s.imageData, let img = ClipImage.make(data: d, persist: persistImages) { kind = .image(img) }
+            else if let f = s.imageFile, let img = ClipImage.make(file: imagesDir.appendingPathComponent(f)) { kind = .image(img) }
             else { return nil }
         default: return nil
         }
@@ -500,6 +607,7 @@ final class ClipboardWatcher {
 
     init(model: NotchModel) {
         m = model
+        ClipImage.clearCache()
         m.pins = ClipStore.loadPins()
         // Bộ nhớ tạm không có thông báo khi đổi, phải hỏi số đếm (rất nhẹ). Cho phép lệch để macOS gom việc.
         timer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { [weak self] _ in
@@ -534,8 +642,13 @@ final class ClipboardWatcher {
             kind = .files(urls)
         } else if let s = pb.string(forType: .string), !s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             kind = .text(String(s.prefix(20000)))
-        } else if let img = NSImage(pasteboard: pb) {
-            kind = .image(img)
+        } else {
+            // Đọc thẳng dữ liệu ảnh (ưu tiên PNG) rồi làm ảnh nhỏ, không giải nén cả ảnh gốc vào RAM.
+            let imgTypes = (pb.types ?? []).filter { UTType($0.rawValue)?.conforms(to: .image) == true }
+            if let t = imgTypes.first(where: { $0 == .png }) ?? imgTypes.first(where: { $0 == .tiff }) ?? imgTypes.first,
+               let d = pb.data(forType: t), let img = ClipImage.make(data: d, persist: true) {
+                kind = .image(img)
+            }
         }
         guard let kind else { return }
         let item = ClipItem(kind: kind, sourceID: front?.bundleIdentifier, sourceName: front?.localizedName)
@@ -554,7 +667,7 @@ final class ClipboardWatcher {
         switch item.kind {
         case .text(let s): pb.setString(s, forType: .string)
         case .files(let urls): pb.writeObjects(urls as [NSURL])
-        case .image(let img): pb.writeObjects([img])
+        case .image(let img): img.put(on: pb)
         }
         // Cờ quy ước của các trình quản lý bộ nhớ tạm: "đừng ghi lại mục này".
         if concealed { pb.setData(Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")) }
@@ -597,7 +710,7 @@ final class ClipboardWatcher {
         switch item.kind {
         case .text(let s): pb.setString(s, forType: .string)
         case .files(let urls): pb.writeObjects(urls as [NSURL])
-        case .image(let img): pb.writeObjects([img])
+        case .image(let img): img.put(on: pb)
         }
         ignore(pb.changeCount)
         if let i = m.clips.firstIndex(where: { $0.id == item.id }) {
@@ -719,7 +832,8 @@ extension ClipCategory {
 /// Bộ nhớ tạm dạng thẻ ngang: liếc là thấy ảnh, màu, code, link vừa chép.
 struct ClipboardView: View {
     @ObservedObject var m: NotchModel
-    @StateObject private var marquee = ClipMarqueeState()
+    // Giữ khung chọn mà không theo dõi nó: kéo khung chỉ vẽ lại phần khung, không vẽ lại cả hàng thẻ.
+    @State private var marquee = ClipMarqueeState()
 
     var body: some View {
         let items = m.visibleClips
@@ -1005,7 +1119,7 @@ struct ClipCard: View {
             .animation(HoverAnim.bounce, value: picked)
             .animation(HoverAnim.bounce, value: picking)
             .scaleEffect(hover ? 1.03 : 1)
-            .shadow(color: .black.opacity(hover ? 0.4 : 0), radius: 8, y: 3)
+            .shadow(color: .black.opacity(hover ? 0.4 : 0), radius: hover ? 8 : 0, y: hover ? 3 : 0)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -1024,7 +1138,7 @@ struct ClipCard: View {
     @ViewBuilder private var content: some View {
         switch item.kind {
         case .image(let img):
-            Image(nsImage: img).resizable().aspectRatio(contentMode: .fill)
+            Image(nsImage: img.thumb).resizable().aspectRatio(contentMode: .fill)
                 .frame(width: w, height: h).clipped()
         case .files(let urls):
             VStack(spacing: 6) {
@@ -1083,7 +1197,8 @@ struct ClipCard: View {
                 Image(systemName: "tag.fill").font(.system(size: 8)).foregroundStyle(Color.orange)
                 Text(name).font(.system(size: 9.5, weight: .semibold)).lineLimit(1)
             } else {
-                Text(item.date, style: .relative).font(.system(size: 9)).lineLimit(1)
+                // Chữ tĩnh "5 phút trước" (vẽ lại khi tai thỏ cập nhật), thay cho đồng hồ tự nhảy từng giây trên mọi thẻ.
+                Text(Self.ago(item.date)).font(.system(size: 9)).lineLimit(1)
             }
             Spacer(minLength: 2)
             if isPrivate {
@@ -1105,8 +1220,19 @@ struct ClipCard: View {
         .foregroundStyle(.white.opacity(0.75))
         .padding(.horizontal, 7)
         .padding(.vertical, 4)
-        .background(.ultraThinMaterial.opacity(0.9))
+        .background(Color(white: 0.1).opacity(0.82))
         .environment(\.colorScheme, .dark)
+    }
+
+    private static let agoFormatter: RelativeDateTimeFormatter = {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .short
+        return f
+    }()
+    static func ago(_ d: Date) -> String {
+        let t = Date().timeIntervalSince(d)
+        if t < 60 { return L("Vừa xong", "Just now") }
+        return agoFormatter.localizedString(for: d, relativeTo: Date())
     }
 
     static func readable(on c: NSColor) -> Color {
@@ -1191,7 +1317,7 @@ struct StackToggleButton: View {
             .background(Capsule().fill(on || hovered ? Color.orange.opacity(hovered ? 0.3 : 0.22) : Color.white.opacity(0.09)))
             .overlay(Capsule().strokeBorder(Color.orange.opacity(hovered ? 0.6 : 0), lineWidth: 1))
             .scaleEffect(hovered ? 1.1 : 1)
-            .shadow(color: Color.orange.opacity(hovered ? 0.45 : 0), radius: 8)
+            .shadow(color: Color.orange.opacity(hovered ? 0.45 : 0), radius: hovered ? 8 : 0)
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
