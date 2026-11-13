@@ -207,6 +207,14 @@ final class PrivateVault {
         scheduleLock()
     }
 
+    /// Chép một mục dựng tạm từ các mục riêng tư (chép gộp): vẫn gắn cờ "bí mật", không ghi vào lịch sử.
+    func copyRaw(_ item: ClipItem) {
+        guard model?.privateUnlocked == true else { return }
+        ClipboardWatcher.shared?.writeQuietly(item, concealed: true)
+        copiedChangeCount = NSPasteboard.general.changeCount
+        scheduleLock()
+    }
+
     /// Chép mục riêng tư: gắn cờ "bí mật" để không app nào (kể cả RinNotch) ghi vào lịch sử.
     func copy(_ item: ClipItem) {
         guard let m = model, m.privateUnlocked else { return }

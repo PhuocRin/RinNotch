@@ -301,6 +301,7 @@ struct LibraryView: View {
     @ObservedObject var m: NotchModel
     @State private var shelfSearch = ""
     @StateObject private var bigMarquee = MarqueeState()
+    @StateObject private var clipMarquee = ClipMarqueeState()
 
     @State private var appeared = false
 
@@ -346,9 +347,13 @@ struct LibraryView: View {
                 }
             }
             if m.libraryTab == .clipboard || m.libraryTab == .shelf {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        if m.libraryTab == .clipboard { ClipChips(m: m, large: true) } else { ShelfChips(m: m) }
+                if m.libraryTab == .clipboard && !m.clipMulti.isEmpty {
+                    ClipSelectionBar(m: m, large: true)
+                } else {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            if m.libraryTab == .clipboard { ClipChips(m: m, large: true) } else { ShelfChips(m: m) }
+                        }
                     }
                 }
             }
@@ -399,13 +404,18 @@ struct LibraryView: View {
             } else if items.isEmpty {
                 empty(symbol: "doc.on.clipboard", text: m.clips.isEmpty && m.pins.isEmpty ? "Copy gì đó, nó sẽ hiện ở đây" : "Không có mục nào khớp")
             } else {
-                ScrollView {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 186, maximum: 240), spacing: 12)], spacing: 12) {
-                        ForEach(items) { item in
-                            ClipCard(item: item, m: m, selected: m.clipSelection == item.id, w: 186, h: 146)
+                GeometryReader { geo in
+                    ScrollView {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 186, maximum: 240), spacing: 12)], spacing: 12) {
+                            ForEach(items) { item in
+                                ClipCard(item: item, m: m, selected: m.clipSelection == item.id, w: 186, h: 146, space: "bigClip")
+                            }
                         }
+                        .padding(4)
+                        // Lưới phủ kín chiều cao để kéo khung ở chỗ trống bên dưới cũng được.
+                        .frame(minHeight: geo.size.height, alignment: .top)
+                        .modifier(ClipMarquee(m: m, space: "bigClip", state: clipMarquee))
                     }
-                    .padding(4)
                 }
             }
         }

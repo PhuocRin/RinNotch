@@ -191,7 +191,9 @@ struct NoteItem: Identifiable, Codable {
 @MainActor
 final class NotchModel: ObservableObject {
     @Published var expanded = false
-    @Published var tab: Tab = .shelf
+    @Published var tab: Tab = .shelf {
+        didSet { if tab != oldValue { clipMulti = [] } }
+    }
     @Published var transient: Transient?
     @Published var recording: RecordingInfo?
     @Published var levels: [CGFloat] = Array(repeating: 0.08, count: 14)
@@ -205,14 +207,22 @@ final class NotchModel: ObservableObject {
     var marqueeActive = false
     @Published var clips: [ClipItem] = []
     @Published var pins: [ClipItem] = []
-    @Published var clipFilter: ClipFilter = .recent
+    @Published var clipFilter: ClipFilter = .recent {
+        // Đổi Gần đây / Ghim / Riêng tư là đổi cả kho thẻ: bỏ vùng chọn cũ.
+        didSet { if clipFilter != oldValue { clipMulti = []; clipAnchor = nil } }
+    }
     @Published var clipCategory: ClipCategory?
     @Published var clipApp: String?
     @Published var shelfKind: ShelfKind?
     @Published var shelfHover: URL?
-    @Published var libraryTab: LibraryTab = .clipboard
+    @Published var libraryTab: LibraryTab = .clipboard {
+        didSet { if libraryTab != oldValue { clipMulti = [] } }
+    }
     @Published var clipSearch = ""
     @Published var clipSelection: UUID?
+    /// Các thẻ Bộ nhớ tạm đang chọn nhiều (kéo khung ở chỗ trống, ⌘ hoặc ⇧ bấm thẻ, ⌘A).
+    @Published var clipMulti: Set<UUID> = []
+    var clipAnchor: UUID?
     @Published var clipFlash: UUID?
     @Published var shelfStatus: String?
     @Published var shelfBusy = false
@@ -3342,6 +3352,11 @@ final class NotchController {
     private func keyDown(_ e: NSEvent) -> Bool {
         guard model.expanded, e.window === panel else { return false }
         if e.keyCode == UInt16(kVK_Escape) {
+            // Đang chọn nhiều thẻ thì Esc bỏ chọn trước, bấm lần nữa mới thu lại.
+            if model.tab == .clipboard && !model.clipMulti.isEmpty {
+                model.clipMulti = []
+                return true
+            }
             collapse()
             return true
         }
@@ -3349,6 +3364,10 @@ final class NotchController {
         let typing = panel.firstResponder is NSTextView
         if mods == .command, e.charactersIgnoringModifiers == "a", model.tab == .shelf, !typing {
             model.shelfSelection = Set(model.visibleShelf)
+            return true
+        }
+        if mods == .command, e.charactersIgnoringModifiers == "a", model.tab == .clipboard, !typing {
+            model.clipMulti = Set(model.visibleClips.map(\.id))
             return true
         }
         guard mods.isEmpty else { return false }
@@ -3506,6 +3525,8 @@ final class NotchController {
         model.expanded = false
         model.dropTargeted = false
         model.clipSelection = nil
+        model.clipMulti = []
+        model.clipAnchor = nil
         model.shelfSelection = []
         model.shelfAnchor = nil
         model.marqueeActive = false
@@ -4192,6 +4213,8 @@ enum TipTopic: String, CaseIterable, Identifiable {
                                     "Paste Stack: press ⌃ twice (or the stack button), copy several things, then each ⌘V pastes the next one in order. Press ⌃ twice again to stop; it stops by itself after the last one.")),
             ("lock.fill", L("Riêng tư: kéo thẻ thả vào nút Riêng tư (hoặc chuột phải → Chuyển vào Riêng tư). Muốn xem thì Mở khoá bằng vân tay (hoặc mật khẩu máy); tự khoá lại sau 3 phút, khi máy ngủ hoặc khoá màn hình. Chuột phải nút Riêng tư hay một thẻ riêng tư → Khoá ngay.",
                            "Private: drag a card onto the Private chip (or right-click → Move to Private). Unlock with Touch ID (or your Mac password) to see it; it locks again after 3 minutes, on sleep or screen lock. Right-click the Private chip or a private card → Lock now.")),
+            ("rectangle.dashed", L("Chọn nhiều thẻ: kéo khung ở chỗ trống (khe trên hàng thẻ, sau thẻ cuối), ⌘ bấm thêm/bớt, ⇧ bấm chọn dải, ⌘A chọn hết. Rồi Chép gộp, Copy liên tục, Ghim, cất Riêng tư hoặc Xoá cả nhóm. Esc bỏ chọn.",
+                                  "Select several cards: drag a box in empty space (above the row, after the last card), ⌘-click to add/remove, ⇧-click for a range, ⌘A for all. Then copy them joined, Paste Stack them, pin, move to Private or delete at once. Esc clears.")),
             ("lock", L("Mật khẩu copy từ trình quản lý mật khẩu không được lưu. Thêm app không muốn ghi trong Cài đặt.",
                       "Passwords from password managers are never saved. Add apps to ignore in Settings.")),
         ]

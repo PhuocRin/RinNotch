@@ -719,11 +719,17 @@ extension ClipCategory {
 /// Bộ nhớ tạm dạng thẻ ngang: liếc là thấy ảnh, màu, code, link vừa chép.
 struct ClipboardView: View {
     @ObservedObject var m: NotchModel
+    @StateObject private var marquee = ClipMarqueeState()
 
     var body: some View {
         let items = m.visibleClips
         VStack(spacing: 8) {
             HStack(spacing: 6) {
+                if !m.clipMulti.isEmpty {
+                    // Đang chọn nhiều thẻ: cả hàng nhường chỗ cho các nút làm cả nhóm.
+                    ClipSelectionBar(m: m)
+                        .transition(.opacity.combined(with: .move(edge: .trailing)))
+                } else {
                 HStack(spacing: 5) {
                     Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
                     TextField("", text: $m.clipSearch, prompt: Text("Tìm, @link @code @tên-app").foregroundColor(.white.opacity(0.35)))
@@ -763,6 +769,7 @@ struct ClipboardView: View {
                     .buttonStyle(HoverPlain())
                     .help("Xoá lịch sử (mục đã ghim vẫn giữ)")
                 }
+                }
                 Button {
                     AppDelegate.shared?.showLibrary(.clipboard)
                 } label: {
@@ -787,26 +794,34 @@ struct ClipboardView: View {
                 .foregroundStyle(.white.opacity(0.8))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
+                GeometryReader { geo in
                 ScrollViewReader { proxy in
                     ScrollView(.horizontal, showsIndicators: false) {
                         LazyHStack(spacing: 10) {
                             ForEach(items) { item in
-                                ClipCard(item: item, m: m, selected: m.clipSelection == item.id).id(item.id)
+                                ClipCard(item: item, m: m, selected: m.clipSelection == item.id, space: "clipArea").id(item.id)
                             }
                         }
                         // Chừa chỗ để thẻ phóng lên khi rê chuột mà không bị cắt trên dưới.
                         .padding(.horizontal, 6)
                         .padding(.vertical, 8)
+                        // Phủ kín bề ngang để kéo khung ở chỗ trống sau thẻ cuối cũng được.
+                        .frame(minWidth: geo.size.width, minHeight: geo.size.height, alignment: .leading)
+                        .modifier(ClipMarquee(m: m, space: "clipArea", state: marquee, root: false))
                     }
                     .onChange(of: m.clipSelection) { _, id in
                         if let id { withAnimation(.easeOut(duration: 0.18)) { proxy.scrollTo(id, anchor: .center) } }
                     }
                 }
+                }
                 .frame(height: ClipCard.height + 16)
-                .help("Bấm thẻ để chép · chuột phải: ghim, đặt tên, sửa chữ, mã màu, dịch · mở bằng ⌃⇧3 thì dùng ← → ↩")
+                .help("Bấm thẻ để chép · kéo khung ở chỗ trống hoặc ⌘ bấm để chọn nhiều · chuột phải: ghim, đặt tên, sửa chữ, dịch")
             }
         }
+        // Kéo khung từ chỗ trống phía trên (khe giữa hàng nút và hàng thẻ) cũng chọn được.
+        .modifier(ClipMarquee(m: m, space: "clipArea", state: marquee))
         .animation(.spring(response: 0.32, dampingFraction: 0.85), value: items.map(\.id))
+        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: m.clipMulti.isEmpty)
     }
 
     private var emptyTitle: String {
@@ -918,16 +933,40 @@ struct ClipCard: View {
     /// Cỡ thẻ: nhỏ trên tai thỏ, lớn hơn trong bảng lớn.
     var w: CGFloat = ClipCard.width
     var h: CGFloat = ClipCard.height
+    /// Vùng toạ độ của khung chọn (báo vị trí thẻ để kéo khung chọn nhiều).
+    var space: String? = nil
     @State private var hover = false
 
     /// Thẻ đang nằm trong mục Riêng tư (đã mở khoá).
     private var isPrivate: Bool { m.clipFilter == .vault }
 
     var body: some View {
+        card.background {
+            if let space {
+                GeometryReader { g in
+                    Color.clear.preference(key: ClipFrameKey.self, value: [item.id: g.frame(in: .named(space))])
+                }
+            }
+        }
+    }
+
+    /// Bấm thẻ: thường thì chép; giữ ⌘ thì thêm/bớt khỏi vùng chọn, ⇧ thì chọn dải; đang chọn nhiều thì bấm là thêm/bớt.
+    private func tap() {
+        let mods = NSEvent.modifierFlags
+        if mods.contains(.shift) || mods.contains(.command) || !m.clipMulti.isEmpty {
+            ClipSelect.click(item, m: m, range: mods.contains(.shift))
+            return
+        }
+        if isPrivate { PrivateVault.shared.copy(item) } else { ClipboardWatcher.shared?.restore(item) }
+    }
+
+    @ViewBuilder private var card: some View {
         let pinned = ClipboardWatcher.shared?.isPinned(item) ?? false
         let flash = m.clipFlash == item.id
+        let picked = m.clipMulti.contains(item.id)
+        let picking = !m.clipMulti.isEmpty
         Button {
-            if isPrivate { PrivateVault.shared.copy(item) } else { ClipboardWatcher.shared?.restore(item) }
+            tap()
         } label: {
             ZStack(alignment: .bottom) {
                 content
@@ -947,8 +986,24 @@ struct ClipCard: View {
             .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 13, style: .continuous)
-                    .strokeBorder(selected ? Color.accentColor : Color.white.opacity(hover ? 0.28 : 0.1), lineWidth: selected ? 2 : 1)
+                    .strokeBorder(selected || picked ? Color.accentColor : Color.white.opacity(hover ? 0.28 : 0.1),
+                                  lineWidth: selected || picked ? 2 : 1)
             )
+            .overlay(alignment: .topTrailing) {
+                // Đang chọn nhiều: thẻ nào cũng có vòng tròn, thẻ đã chọn có dấu tick.
+                if picking {
+                    Image(systemName: picked ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(picked ? Color.white : Color.white.opacity(0.7), picked ? Color.accentColor : Color.clear)
+                        .background(Circle().fill(Color.black.opacity(picked ? 0 : 0.35)).padding(1))
+                        .shadow(color: .black.opacity(0.4), radius: 2)
+                        .padding(6)
+                        .transition(.scale.combined(with: .opacity))
+                        .allowsHitTesting(false)
+                }
+            }
+            .animation(HoverAnim.bounce, value: picked)
+            .animation(HoverAnim.bounce, value: picking)
             .scaleEffect(hover ? 1.03 : 1)
             .shadow(color: .black.opacity(hover ? 0.4 : 0), radius: 8, y: 3)
             .contentShape(Rectangle())
@@ -956,10 +1011,14 @@ struct ClipCard: View {
         .buttonStyle(.plain)
         .onHover { h in withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) { hover = h } }
         .animation(.easeOut(duration: 0.15), value: flash)
-        .contextMenu { if isPrivate { privateMenu } else { menu(pinned: pinned) } }
-        .modifier(ClipDragModifier(item: item, enabled: !isPrivate))
-        .help(isPrivate ? "Mục riêng tư · bấm để chép (không ghi vào lịch sử)"
-                        : (item.sourceName.map { "Chép từ \($0) · kéo thả vào nút Riêng tư để cất" } ?? "Bấm để chép lại"))
+        .contextMenu {
+            if picked && m.clipMulti.count > 1 { ClipSelectionMenu(m: m) }
+            else if isPrivate { privateMenu } else { menu(pinned: pinned) }
+        }
+        .modifier(ClipDragModifier(item: item, enabled: !isPrivate && !picking))
+        .help(picking ? "Bấm để chọn / bỏ chọn thẻ này"
+              : isPrivate ? "Mục riêng tư · bấm để chép (không ghi vào lịch sử) · ⌘ bấm để chọn nhiều"
+                          : (item.sourceName.map { "Chép từ \($0) · ⌘ bấm hoặc kéo khung ở chỗ trống để chọn nhiều" } ?? "Bấm để chép lại"))
     }
 
     @ViewBuilder private var content: some View {

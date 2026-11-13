@@ -57,6 +57,25 @@ final class PasteStack {
         if active { stop(.user) } else { start() }
     }
 
+    /// Bật Copy liên tục với sẵn các mục đã chọn trong Bộ nhớ tạm (dán theo thứ tự đã copy: cũ trước).
+    /// Đang bật sẵn thì nối thêm vào cuối hàng chờ.
+    func start(with items: [ClipItem]) {
+        guard let m = model, !items.isEmpty else { return }
+        if active {
+            m.stack?.append(contentsOf: items)
+            if m.expanded { AppDelegate.shared?.controller.collapse() }
+            m.showTransient(.message(symbol: "square.stack.3d.up.fill", title: "Thêm \(items.count) mục vào Copy liên tục",
+                                     detail: "⌘V để dán lần lượt · nhấn ⌃ hai lần để tắt"), seconds: 2.5)
+            return
+        }
+        start()
+        guard active else { return }
+        m.stack = items
+        m.showTransient(.message(symbol: "square.stack.3d.up.fill", title: "Sẵn sàng dán \(items.count) mục",
+                                 detail: "⌘V để dán lần lượt · nhấn ⌃ hai lần để tắt"), seconds: 2.5)
+        Diag.log("Copy liên tục: nạp sẵn \(items.count) mục")
+    }
+
     func start() {
         guard let m = model, !active else { return }
         guard Access.trusted else {
