@@ -249,7 +249,7 @@ final class NotchModel: ObservableObject {
     private var transientTimer: Timer?
     private var shelfStatusWork: DispatchWorkItem?
 
-    /// Dòng báo ngắn trong mục Công cụ (chỉnh cửa sổ không được…).
+    /// Dòng báo ngắn trong mục Cửa sổ (chỉnh cửa sổ không được, thiếu quyền…).
     @Published var toolStatus: String?
     private var toolStatusWork: DispatchWorkItem?
     func flashToolStatus(_ text: String) {
@@ -539,7 +539,8 @@ struct IslandView: View {
     var shape: IslandShape { IslandShape(pill: !m.hasNotch, bottomRadius: bottomRadius, topRadius: topRadius) }
 
     /// Viên thuốc lúc rảnh trên màn hình không tai thỏ (tắt được trong Cài đặt).
-    var idleHidden: Bool { phase == .idle && !m.hasNotch && !Prefs.showIdlePill }
+    @AppStorage("showIdlePill") private var showIdlePill = true
+    var idleHidden: Bool { phase == .idle && !m.hasNotch && !showIdlePill }
 
     /// Kích thước đang vẽ: chạy theo `size` bằng hai nhịp (bung: kéo ngang trước rồi mới thả xuống;
     /// thu: kéo lên trước rồi mới thu ngang), nhìn giống Dynamic Island hơn là phóng to đều.
@@ -1059,7 +1060,8 @@ struct ExpandedView: View {
                 Spacer(minLength: 0)
                 if let r = m.recording {
                     HStack(spacing: 8) {
-                        RecordingBadge(info: r, showName: !m.micDenied)
+                        // Đủ 9 mục + 3 nút thì không còn chỗ cho tên app và sóng âm lúc bung (dạng gọn vẫn có sóng âm).
+                        RecordingBadge(info: r, showName: false)
                         if m.micDenied {
                             Button("Cấp quyền micro") {
                                 if let u = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
@@ -1067,8 +1069,6 @@ struct ExpandedView: View {
                                 }
                             }
                             .buttonStyle(PillButton())
-                        } else {
-                            Waveform(levels: m.levels).scaleEffect(0.8)
                         }
                     }
                 }
@@ -1084,9 +1084,12 @@ struct ExpandedView: View {
                     AppDelegate.shared?.showTips(topic)
                 }
                 // Trái tim nhỏ: bấm vào mới mở cửa sổ Ủng hộ tác giả, không tự hiện gì.
-                NotchIconButton(symbol: "heart.fill", tint: Color.pink.opacity(0.9), name: "Ủng hộ tác giả", tagAlignment: .bottomTrailing) {
-                    AppDelegate.shared?.controller.collapse()
-                    AppDelegate.shared?.showSupport()
+                // Đang ghi âm thì cất trái tim cho đủ chỗ (vẫn mở được từ menu thanh menu).
+                if m.recording == nil {
+                    NotchIconButton(symbol: "heart.fill", tint: Color.pink.opacity(0.9), name: "Ủng hộ tác giả", tagAlignment: .bottomTrailing) {
+                        AppDelegate.shared?.controller.collapse()
+                        AppDelegate.shared?.showSupport()
+                    }
                 }
             }
             // Nhãn nổi dưới mục đang rê chuột phải vẽ đè lên phần nội dung bên dưới.
@@ -1174,7 +1177,8 @@ struct TabBar: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .overlay(alignment: .bottom) {
+        // Mục đầu tiên sát mép trái: nhãn canh trái cho khỏi bị mép tai thỏ cắt.
+        .overlay(alignment: t == Tab.allCases.first ? .bottomLeading : .bottom) {
             if hovered && (!selected || m.recording != nil) {
                 HoverTag(text: tagText(t))
                     .offset(y: 30)
@@ -3302,8 +3306,9 @@ final class NotchController {
 
     /// Có nhiều màn hình (màn hình rời, iPad làm màn hình phụ): tai thỏ / viên thuốc đi theo màn hình có chuột.
     private func followMouse(_ p: NSPoint) {
-        guard Prefs.followMouseScreen, NSScreen.screens.count > 1, !model.expanded, model.transient == nil,
-              model.keyboardLockUntil == nil, !geo.screenFrame.contains(p) else { return }
+        // So khung màn hình hiện tại trước (rẻ nhất): chuột còn trong màn hình này thì thôi, không đọc gì thêm.
+        guard !geo.screenFrame.contains(p), !model.expanded, model.transient == nil, model.keyboardLockUntil == nil,
+              Prefs.followMouseScreen, NSScreen.screens.count > 1 else { return }
         let screens = NSScreen.screens
         guard let s = screens.first(where: { $0.frame.contains(p) })
                 ?? screens.first(where: { $0.frame.insetBy(dx: 0, dy: -2).contains(p) }),
@@ -3574,7 +3579,6 @@ enum Prefs {
     static var showCopyToast: Bool { bool("showCopyToast") }
     static var showDownloads: Bool { bool("showDownloads") }
     static var stackDoubleControl: Bool { bool("stackDoubleControl") }
-    static var showIdlePill: Bool { bool("showIdlePill") }
     static var followMouseScreen: Bool { bool("followMouseScreen") }
     static var awakeStopLowBattery: Bool { bool("awakeStopLowBattery") }
     static var awakeStopOnSleep: Bool { bool("awakeStopOnSleep") }
@@ -3934,6 +3938,8 @@ struct SettingsView: View {
                 section(L("Chung", "General")) {
                     Toggle(L("Mở cùng máy", "Open at login"), isOn: $login)
                         .onChange(of: login) { _, on in
+                            // Người dùng đã tự chọn: thôi bật sẵn.
+                            UserDefaults.standard.set(false, forKey: "loginDefaultPending")
                             do {
                                 if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
                             } catch {
@@ -4267,7 +4273,7 @@ struct TipsView: View {
                             Image(systemName: t.symbol).font(.system(size: 15, weight: .semibold))
                             Text(t.title).font(.system(size: 10, weight: .medium)).lineLimit(1).minimumScaleFactor(0.8)
                         }
-                        .frame(width: 56, height: 46)
+                        .frame(width: 52, height: 46)
                         .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
                             .fill(topic == t ? Color.accentColor.opacity(0.22) : Color.primary.opacity(0.05)))
                         .foregroundStyle(topic == t ? Color.accentColor : Color.primary.opacity(0.75))
@@ -4913,11 +4919,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         CopyToast.shared.setup()
         PasteStack.shared.setup(model: model)
         PrivateVault.shared.setup(model: model)
-        // Mở cùng máy bật sẵn (Phước muốn 13/11): chỉ bật một lần, ai tắt trong Cài đặt thì giữ nguyên lựa chọn đó.
-        if !UserDefaults.standard.bool(forKey: "loginDefaultApplied") {
-            UserDefaults.standard.set(true, forKey: "loginDefaultApplied")
-            if SMAppService.mainApp.status != .enabled {
-                do { try SMAppService.mainApp.register() } catch { Diag.log("Mở cùng máy: \(error.localizedDescription)") }
+        // Mở cùng máy bật sẵn cho người CÀI MỚI (Phước muốn 13/11). Người đang dùng bản cũ đã tự chọn bật / tắt
+        // trong Cài đặt thì giữ nguyên. Đăng ký không được (ví dụ đang chạy thẳng từ .dmg) thì lần mở sau thử lại.
+        let d = UserDefaults.standard
+        if d.object(forKey: "loginDefaultPending") == nil {
+            let fresh = ["lastUpdateCheck", "tipsShown", "shelf", "notes", "defaultTab"].allSatisfy { d.object(forKey: $0) == nil }
+            d.set(fresh, forKey: "loginDefaultPending")
+        }
+        if d.bool(forKey: "loginDefaultPending") {
+            if SMAppService.mainApp.status == .enabled {
+                d.set(false, forKey: "loginDefaultPending")
+            } else {
+                do {
+                    try SMAppService.mainApp.register()
+                    d.set(false, forKey: "loginDefaultPending")
+                } catch {
+                    Diag.log("Mở cùng máy: \(error.localizedDescription)")
+                }
             }
         }
         DownloadWatcher.shared.setup(model: model)

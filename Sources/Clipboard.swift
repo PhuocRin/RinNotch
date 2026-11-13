@@ -628,6 +628,15 @@ final class ClipboardWatcher {
 
     func clearHistory() { m.clips.removeAll() }
 
+    /// Bỏ mọi bản cùng nội dung khỏi lịch sử và Ghim (dùng khi cất vào Riêng tư).
+    func purge(_ item: ClipItem) {
+        m.clips.removeAll { $0.id == item.id || $0.sameContent(item) }
+        if m.pins.contains(where: { $0.id == item.id || $0.sameContent(item) }) {
+            m.pins.removeAll { $0.id == item.id || $0.sameContent(item) }
+            ClipStore.savePins(m.pins)
+        }
+    }
+
     /// Đặt tên cho một mục (nil = bỏ tên). Mục đã ghim thì lưu luôn.
     func setName(_ item: ClipItem, _ name: String?) {
         let n = name?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -735,6 +744,9 @@ struct ClipboardView: View {
                     HStack(spacing: 5) {
                         ClipChips(m: m)
                     }
+                    // Chừa chỗ cho nút phóng to khi rê chuột, không bị cuộn cắt trên dưới.
+                    .padding(.vertical, 4)
+                    .padding(.horizontal, 3)
                 }
                 if m.clipFilter == .vault && m.privateUnlocked { VaultLockButton() }
                 StackToggleButton(m: m)
@@ -1018,17 +1030,17 @@ struct ClipCard: View {
             if isPrivate {
                 Image(systemName: "lock.fill").font(.system(size: 9, weight: .semibold)).foregroundStyle(Color.orange)
             } else {
-            Button {
-                ClipboardWatcher.shared?.togglePin(item)
-            } label: {
-                Image(systemName: pinned ? "pin.fill" : "pin")
-                    .font(.system(size: 9.5, weight: .semibold))
-                    .foregroundStyle(pinned ? Color.orange : Color.white.opacity(hover ? 0.8 : 0.35))
-                    .frame(width: 16, height: 16)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(HoverPlain())
-            .help(pinned ? "Bỏ ghim" : "Ghim (giữ lại lâu dài)")
+                Button {
+                    ClipboardWatcher.shared?.togglePin(item)
+                } label: {
+                    Image(systemName: pinned ? "pin.fill" : "pin")
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundStyle(pinned ? Color.orange : Color.white.opacity(hover ? 0.8 : 0.35))
+                        .frame(width: 16, height: 16)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(HoverPlain())
+                .help(pinned ? "Bỏ ghim" : "Ghim (giữ lại lâu dài)")
             }
         }
         .foregroundStyle(.white.opacity(0.75))

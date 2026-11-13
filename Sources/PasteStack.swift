@@ -2,8 +2,9 @@
 // từng thứ theo đúng thứ tự đã copy. Nhấn ⌃ hai lần nữa để tắt (dán hết thì tự tắt).
 //
 // Cách làm:
-// - Nhận ⌃ hai lần: một event tap CHỈ NGHE (listenOnly) phím bổ trợ và phím thường. Chỉ nghe nên không
-//   làm chậm phím của app khác dù RinNotch có bận.
+// - Nhận ⌃ hai lần: một event tap CHỈ nhận sự kiện phím bổ trợ (⌃ ⌘ ⌥ ⇧), không nhận phím chữ, nên không chạy theo
+//   mỗi lần gõ. Có phím / bấm chuột / cuộn xen giữa (⌃Space đổi bộ gõ, ⌃-click…) thì hỏi đồng hồ của hệ thống
+//   (`secondsSinceLastEventType`, đếm cả phím bị phím tắt app khác nuốt) và bỏ qua.
 // - Dán lần lượt: chỉ khi đang bật mới gắn thêm một event tap chặn được (defaultTap) cho phím thường.
 //   Thấy ⌘V thì đặt bộ nhớ tạm thành mục kế tiếp NGAY TRƯỚC khi app kia nhận phím, rồi cho phím đi tiếp.
 // - Cả hai cần quyền Trợ năng (đã dùng cho Dịch nhanh và Lau bàn phím).
@@ -25,6 +26,7 @@ final class PasteStack {
     // Nhận ⌃ hai lần
     private var ctrlDownAt: TimeInterval?
     private var lastCtrlTap: TimeInterval?
+    private var firstTapAt: TimeInterval?
 
     var active: Bool { model?.stack != nil }
 
@@ -59,6 +61,8 @@ final class PasteStack {
         guard let m = model, !active else { return }
         guard Access.trusted else {
             Access.prompt()
+            // Đang bung thì banner không hiện được: thu lại trước.
+            if m.expanded { AppDelegate.shared?.controller.collapse() }
             m.showTransient(.message(symbol: "hand.raised", title: "Copy liên tục cần quyền Trợ năng",
                                      detail: "Cài đặt hệ thống → Quyền riêng tư & Bảo mật → Trợ năng → RinNotch"), seconds: 5)
             return
@@ -123,8 +127,10 @@ final class PasteStack {
 
     private func installListen() {
         guard listenTap == nil else { return }
-        let mask = (CGEventMask(1) << CGEventType.flagsChanged.rawValue) | (CGEventMask(1) << CGEventType.keyDown.rawValue)
-        guard let t = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .tailAppendEventTap, options: .listenOnly,
+        // Chỉ phím bổ trợ (rất ít sự kiện). defaultTap thay cho listenOnly: chỉ cần quyền Trợ năng, không cần thêm
+        // quyền Theo dõi đầu vào; callback chỉ so vài con số rồi cho sự kiện đi tiếp ngay.
+        let mask = CGEventMask(1) << CGEventType.flagsChanged.rawValue
+        guard let t = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .tailAppendEventTap, options: .defaultTap,
                                         eventsOfInterest: mask, callback: stackListenCallback, userInfo: nil) else {
             Diag.log("Copy liên tục: không tạo được tap nghe ⌃")
             return
@@ -143,8 +149,20 @@ final class PasteStack {
         if let s = listenSource { CFRunLoopRemoveSource(CFRunLoopGetMain(), s, .commonModes) }
         listenTap = nil
         listenSource = nil
+        resetTaps()
+    }
+
+    private func resetTaps() {
         ctrlDownAt = nil
         lastCtrlTap = nil
+        firstTapAt = nil
+    }
+
+    /// Có phím thường, bấm chuột hay cuộn nào từ thời điểm `t` (giây kể từ lúc máy chạy) tới giờ không.
+    private func otherInput(since t: TimeInterval) -> Bool {
+        let elapsed = ProcessInfo.processInfo.systemUptime - t
+        let types: [CGEventType] = [.keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel]
+        return types.contains { CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: $0) < elapsed - 0.005 }
     }
 
     private func installPasteTap() -> Bool {
@@ -177,14 +195,8 @@ final class PasteStack {
             if let t = listenTap { CGEvent.tapEnable(tap: t, enable: true) }
             return
         }
-        let now = ProcessInfo.processInfo.systemUptime
-        if type == .keyDown {
-            // Có phím khác xen giữa (⌃C, ⌃A…): không tính là nhấn ⌃ hai lần.
-            ctrlDownAt = nil
-            lastCtrlTap = nil
-            return
-        }
         guard type == .flagsChanged else { return }
+        let now = ProcessInfo.processInfo.systemUptime
         let f = event.flags
         let others = f.intersection([.maskCommand, .maskShift, .maskAlternate, .maskSecondaryFn])
         let ctrl = f.contains(.maskControl)
@@ -192,17 +204,18 @@ final class PasteStack {
             if ctrlDownAt == nil { ctrlDownAt = now }
         } else if !ctrl, let down = ctrlDownAt, others.isEmpty {
             ctrlDownAt = nil
-            guard now - down < 0.35 else { lastCtrlTap = nil; return }
-            if let last = lastCtrlTap, now - last < 0.45 {
-                lastCtrlTap = nil
+            // Giữ ⌃ lâu, hoặc có phím / chuột xen giữa lúc giữ (⌃C, ⌃Space, ⌃-click…): không tính.
+            guard now - down < 0.35, !otherInput(since: down) else { resetTaps(); return }
+            if let last = lastCtrlTap, now - last < 0.45, let first = firstTapAt, !otherInput(since: first) {
+                resetTaps()
                 toggle()
             } else {
                 lastCtrlTap = now
+                firstTapAt = down
             }
         } else {
             // Đang giữ thêm phím bổ trợ khác: không tính.
-            ctrlDownAt = nil
-            lastCtrlTap = nil
+            resetTaps()
         }
     }
 
@@ -212,6 +225,8 @@ final class PasteStack {
             return
         }
         guard type == .keyDown, event.getIntegerValueField(.keyboardEventAutorepeat) == 0 else { return }
+        // ⌘V do chính RinNotch giả lập (Dịch nhanh → Thay chỗ chọn) thì để yên, không đổi sang mục kế.
+        guard event.getIntegerValueField(.eventSourceUnixProcessID) != Int64(getpid()) else { return }
         let f = event.flags
         guard f.contains(.maskCommand), f.intersection([.maskShift, .maskAlternate, .maskControl]).isEmpty else { return }
         let code = event.getIntegerValueField(.keyboardEventKeycode)

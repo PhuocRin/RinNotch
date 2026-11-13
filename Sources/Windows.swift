@@ -146,7 +146,13 @@ enum WindowSnap {
         let target: CGRect
     }
 
+    /// Đặt thời gian chờ chung cho mọi lệnh Trợ năng của RinNotch (cả cửa sổ con), một lần.
+    private static let timeoutOnce: Void = {
+        AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), 0.5)
+    }()
+
     private static func ensureTrusted(_ m: NotchModel) -> Bool {
+        _ = timeoutOnce
         guard Access.trusted else {
             Access.prompt()
             m.flashToolStatus("Cần quyền Trợ năng: Cài đặt hệ thống → Quyền riêng tư & Bảo mật → Trợ năng → RinNotch")
@@ -243,13 +249,24 @@ enum WindowSnap {
     }
 
     private static func commit(_ moves: [Move]) {
-        // Bấm tiếp một kiểu khác trên đúng các cửa sổ vừa xếp (chưa bị kéo tay): giữ khung gốc ban đầu cho Trả lại.
-        let chained = !undo.isEmpty && moves.allSatisfy { mv in
-            undo.contains { CFEqual($0.window, mv.window) }
-                && applied.contains { CFEqual($0.window, mv.window) && near($0.frame, mv.current) }
+        // Trả lại đưa về khung GỐC: cửa sổ nào còn đúng khung RinNotch vừa đặt (chưa bị kéo tay) thì giữ khung gốc
+        // đã nhớ; cửa sổ mới hoặc đã bị kéo thì nhớ khung hiện tại. Cửa sổ của lần trước còn nguyên thì vẫn giữ.
+        func untouched(_ w: AXUIElement, _ current: CGRect) -> Bool {
+            applied.contains { CFEqual($0.window, w) && near($0.frame, current) }
         }
-        if !chained { undo = moves.map { ($0.window, $0.current) } }
-        if !chained { applied = [] }
+        var newUndo: [(window: AXUIElement, frame: CGRect)] = []
+        for mv in moves {
+            if untouched(mv.window, mv.current), let old = undo.first(where: { CFEqual($0.window, mv.window) }) {
+                newUndo.append(old)
+            } else {
+                newUndo.append((mv.window, mv.current))
+            }
+        }
+        for old in undo where !moves.contains(where: { CFEqual($0.window, old.window) }) {
+            if let cur = frame(of: old.window), untouched(old.window, cur) { newUndo.append(old) }
+        }
+        undo = newUndo
+        applied.removeAll { a in !undo.contains { CFEqual($0.window, a.window) } }
         for mv in moves {
             set(mv.window, mv.target)
             applied.removeAll { CFEqual($0.window, mv.window) }
@@ -294,6 +311,8 @@ enum WindowSnap {
     /// Tìm cửa sổ Trợ năng khớp khung với cửa sổ trong danh sách.
     private static func axWindow(pid: pid_t, bounds: CGRect) -> AXUIElement? {
         let app = AXUIElementCreateApplication(pid)
+        // App đang treo thì đừng để RinNotch chờ theo (mặc định chờ tới 6 giây).
+        AXUIElementSetMessagingTimeout(app, 0.5)
         var v: CFTypeRef?
         guard AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &v) == .success,
               let list = v as? [AXUIElement] else { return nil }
@@ -317,6 +336,8 @@ enum WindowSnap {
 
     private static func focusedWindow(_ pid: pid_t) -> AXUIElement? {
         let app = AXUIElementCreateApplication(pid)
+        // App đang treo thì đừng để RinNotch chờ theo (mặc định chờ tới 6 giây).
+        AXUIElementSetMessagingTimeout(app, 0.5)
         for attr in [kAXFocusedWindowAttribute, kAXMainWindowAttribute] {
             var v: CFTypeRef?
             if AXUIElementCopyAttributeValue(app, attr as CFString, &v) == .success, let v,

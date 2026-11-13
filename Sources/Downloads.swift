@@ -25,6 +25,9 @@ final class DownloadWatcher {
     private var subscriber: Any?
     private var entries: [ObjectIdentifier: Entry] = [:]
     private var sampler: Timer?
+    private var samplerFast = false
+    /// Đứng yên quá chừng này giây (tạm dừng) thì ẩn khỏi tai thỏ và hỏi thưa lại.
+    private static let staleAfter: TimeInterval = 60
 
     final class Entry {
         let progress: Progress
@@ -32,10 +35,13 @@ final class DownloadWatcher {
         var lastBytes: Int64
         var lastAt: TimeInterval
         var speed: Double = 0
+        /// Lần cuối số byte thay đổi: đứng yên lâu (tạm dừng tải) thì thôi hiện.
+        var lastChange: TimeInterval
         init(_ p: Progress) {
             progress = p
             lastBytes = p.completedUnitCount
             lastAt = ProcessInfo.processInfo.systemUptime
+            lastChange = lastAt
         }
         var url: URL? { progress.fileURL }
         var operation: Progress.FileOperationKind? { progress.fileOperationKind }
@@ -70,24 +76,33 @@ final class DownloadWatcher {
         if let s = subscriber { Progress.removeSubscriber(s) }
         subscriber = nil
         entries.removeAll()
-        sampler?.invalidate()
-        sampler = nil
+        setSampler(fast: nil)
         model?.downloads = nil
     }
 
     private func began(_ p: Progress) {
         guard p.kind == nil || p.kind == .file else { return }
         entries[ObjectIdentifier(p)] = Entry(p)
-        if sampler == nil {
-            // Chỉ chạy khi đang có file tải; xong là dừng.
-            let t = Timer(timeInterval: 0.5, repeats: true) { _ in
-                MainActor.assumeIsolated { DownloadWatcher.shared.sample() }
-            }
-            t.tolerance = 0.15
-            RunLoop.main.add(t, forMode: .common)
-            sampler = t
-        }
+        setSampler(fast: true)
         sample()
+    }
+
+    /// Chỉ chạy khi đang có file tải: 0,5 giây khi đang chạy, 5 giây khi mọi file đều đang tạm dừng; hết file là dừng.
+    private func setSampler(fast: Bool?) {
+        guard let fast else {
+            sampler?.invalidate()
+            sampler = nil
+            return
+        }
+        if sampler != nil && samplerFast == fast { return }
+        sampler?.invalidate()
+        let t = Timer(timeInterval: fast ? 0.5 : 5, repeats: true) { _ in
+            MainActor.assumeIsolated { DownloadWatcher.shared.sample() }
+        }
+        t.tolerance = fast ? 0.15 : 1.5
+        RunLoop.main.add(t, forMode: .common)
+        sampler = t
+        samplerFast = fast
     }
 
     private func ended(_ p: Progress) {
@@ -99,8 +114,7 @@ final class DownloadWatcher {
             m.showTransient(.message(symbol: "arrow.down.circle.fill", title: title, detail: e.name), seconds: 3)
         }
         if entries.isEmpty {
-            sampler?.invalidate()
-            sampler = nil
+            setSampler(fast: nil)
             model?.downloads = nil
         } else {
             sample()
@@ -116,6 +130,9 @@ final class DownloadWatcher {
             let p = e.progress
             let c = p.completedUnitCount
             let dt = now - e.lastAt
+            if c != e.lastBytes { e.lastChange = now }
+            // Tạm dừng lâu: không tính vào phần hiện trên tai thỏ.
+            if now - e.lastChange > Self.staleAfter { continue }
             if dt >= 0.4 {
                 let inst = Double(max(c - e.lastBytes, 0)) / dt
                 e.speed = e.speed == 0 ? inst : e.speed * 0.6 + inst * 0.4
@@ -129,16 +146,19 @@ final class DownloadWatcher {
                 total += p.totalUnitCount
             }
         }
-        guard let first = entries.values.min(by: { $0.started < $1.started }) else {
+        let live = entries.values.filter { now - $0.lastChange <= Self.staleAfter }
+        guard let first = live.min(by: { $0.started < $1.started }) else {
             m.downloads = nil
+            setSampler(fast: entries.isEmpty ? nil : false)
             return
         }
+        setSampler(fast: true)
         let fraction: Double? = known && total > 0 ? Double(done) / Double(total) : nil
-        let s = DownloadSummary(count: entries.count,
+        let s = DownloadSummary(count: live.count,
                                 fraction: fraction.map { ($0 * 100).rounded() / 100 },
                                 name: first.name,
                                 bytesPerSecond: (speed / 10_000).rounded() * 10_000,
-                                copying: entries.values.allSatisfy(\.isCopy))
+                                copying: live.allSatisfy(\.isCopy))
         if m.downloads != s { m.downloads = s }
     }
 

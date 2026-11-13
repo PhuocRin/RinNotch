@@ -24,6 +24,9 @@ final class PrivateVault {
     static let shared = PrivateVault()
     weak var model: NotchModel?
     private var lockWork: DispatchWorkItem?
+    private var statusWork: DispatchWorkItem?
+    /// Số đếm bộ nhớ tạm lúc vừa chép một mục riêng tư: khoá lại mà bộ nhớ tạm vẫn là mục đó thì xoá đi.
+    private var copiedChangeCount: Int?
     private var observers: [NSObjectProtocol] = []
 
     static let autoLockMinutes: Double = 3
@@ -58,7 +61,7 @@ final class PrivateVault {
         ctx.touchIDAuthenticationAllowableReuseDuration = 30
         var err: NSError?
         guard ctx.canEvaluatePolicy(.deviceOwnerAuthentication, error: &err) else {
-            m.privateStatus = "Máy chưa đặt mật khẩu đăng nhập nên không khoá được"
+            setStatus("Máy chưa đặt mật khẩu đăng nhập nên không khoá được")
             return
         }
         m.privateStatus = nil
@@ -69,16 +72,48 @@ final class PrivateVault {
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     if ok { PrivateVault.shared.didUnlock(box.ctx) }
-                    else if !cancelled { PrivateVault.shared.model?.privateStatus = "Chưa mở được, thử lại nha" }
+                    else if !cancelled { PrivateVault.shared.setStatus("Chưa mở được, thử lại nha") }
                 }
             }
         }
     }
 
+    /// Dòng báo dưới ổ khoá, tự tắt sau vài giây.
+    func setStatus(_ text: String) {
+        model?.privateStatus = text
+        statusWork?.cancel()
+        let w = DispatchWorkItem { MainActor.assumeIsolated { PrivateVault.shared.model?.privateStatus = nil } }
+        statusWork = w
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6, execute: w)
+    }
+
     private func didUnlock(_ ctx: LAContext) {
+        // Giải mã ở luồng nền (mỗi mục một phép tính trong chip bảo mật), xong mới đưa lên giao diện.
+        let meta = Self.meta()
+        let files = Self.itemFiles()
+        let box = ContextBox(ctx)
+        DispatchQueue.global(qos: .userInitiated).async {
+            let (plains, failed) = PrivateVault.decryptAll(box.ctx, meta: meta, files: files)
+            let out = PlainBox(plains)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { PrivateVault.shared.finishUnlock(out.v, failed: failed) }
+            }
+        }
+    }
+
+    private func finishUnlock(_ plains: [Data], failed: Int) {
         guard let m = model else { return }
-        let (list, failed) = Self.readAll(ctx)
-        if failed > 0 { m.privateStatus = "Có \(failed) mục không giải mã được" }
+        var bad = failed
+        var list: [ClipItem] = []
+        for d in plains {
+            if let stored = try? JSONDecoder().decode(StoredClip.self, from: d), let item = ClipStore.decode(stored) {
+                list.append(item)
+            } else {
+                bad += 1
+            }
+        }
+        list.sort { $0.date > $1.date }
+        if bad > 0 { setStatus("Có \(bad) mục không giải mã được") }
         withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
             m.privateClips = list
             m.privateUnlocked = true
@@ -96,6 +131,14 @@ final class PrivateVault {
             m.privateClips = []
         }
         if m.clipFilter == .vault { m.clipSelection = nil }
+        m.privateStatus = nil
+        // Mục riêng tư vừa chép mà vẫn nằm trong bộ nhớ tạm thì xoá đi, khoá rồi không dán ra được nữa.
+        let pb = NSPasteboard.general
+        if let c = copiedChangeCount, pb.changeCount == c {
+            pb.clearContents()
+            ClipboardWatcher.shared?.ignore(pb.changeCount)
+        }
+        copiedChangeCount = nil
     }
 
     /// Đang dùng (chép, cất thêm) thì dời giờ tự khoá.
@@ -117,10 +160,12 @@ final class PrivateVault {
             m.privateClips.removeAll { $0.id == dup.id }
         }
         guard Self.write(item) else {
-            m.privateStatus = "Không cất được vào Riêng tư"
+            setStatus("Không cất được vào Riêng tư")
             return
         }
-        ClipboardWatcher.shared?.remove(item)
+        // Xoá mọi bản cùng nội dung ở lịch sử và Ghim (ghim lưu ra ổ dạng chữ thường), kể cả bản có mã khác.
+        ClipboardWatcher.shared?.purge(item)
+        CopyToast.shared.hide()
         if m.privateUnlocked {
             withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { m.privateClips.insert(item, at: 0) }
             scheduleLock()
@@ -160,6 +205,7 @@ final class PrivateVault {
     func copy(_ item: ClipItem) {
         guard let m = model, m.privateUnlocked else { return }
         ClipboardWatcher.shared?.writeQuietly(item, concealed: true)
+        copiedChangeCount = NSPasteboard.general.changeCount
         m.clipFlash = item.id
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
             MainActor.assumeIsolated {
@@ -198,7 +244,7 @@ final class PrivateVault {
     private static var dir: URL { ClipStore.dir.appendingPathComponent("private", isDirectory: true) }
     private static var itemsDir: URL { dir.appendingPathComponent("items", isDirectory: true) }
     private static var metaFile: URL { dir.appendingPathComponent("vault.json") }
-    private static let info = Data("RinNotch private clipboard".utf8)
+    nonisolated private static let info = Data("RinNotch private clipboard".utf8)
 
     private static func meta() -> Meta? {
         guard let d = try? Data(contentsOf: metaFile) else { return nil }
@@ -231,6 +277,13 @@ final class PrivateVault {
         }
         guard let m, let d = try? JSONEncoder().encode(m), (try? d.write(to: metaFile, options: .atomic)) != nil else { return nil }
         secure(metaFile)
+        if m.mode == "file" {
+            // Kiểu "file" thì khoá nằm trong vault.json: không cho Time Machine sao lưu kèm dữ liệu.
+            var url = metaFile
+            var v = URLResourceValues()
+            v.isExcludedFromBackup = true
+            try? url.setResourceValues(v)
+        }
         return m
     }
 
@@ -272,20 +325,20 @@ final class PrivateVault {
         return true
     }
 
-    /// Giải mã mọi mục bằng phiên vân tay vừa xác thực. Trả về danh sách + số mục hỏng.
-    private static func readAll(_ ctx: LAContext) -> ([ClipItem], Int) {
-        guard let m = meta() else { return ([], 0) }
+    /// Giải mã mọi mục bằng phiên vân tay vừa xác thực (chạy ở luồng nền). Trả về dữ liệu đã giải mã + số mục hỏng.
+    nonisolated private static func decryptAll(_ ctx: LAContext, meta: Meta?, files: [URL]) -> ([Data], Int) {
+        guard let m = meta else { return ([], 0) }
         var sePriv: SecureEnclave.P256.KeyAgreement.PrivateKey?
         if m.mode == "se" {
             guard let kd = m.seKey,
                   let k = try? SecureEnclave.P256.KeyAgreement.PrivateKey(dataRepresentation: kd, authenticationContext: ctx) else {
-                return ([], itemFiles().count)
+                return ([], files.count)
             }
             sePriv = k
         }
-        var out: [ClipItem] = []
+        var out: [Data] = []
         var failed = 0
-        for url in itemFiles() {
+        for url in files {
             guard let d = try? Data(contentsOf: url), let rec = try? JSONDecoder().decode(Record.self, from: d) else { failed += 1; continue }
             var key: SymmetricKey?
             if let sePriv, let epk = rec.epk,
@@ -295,15 +348,19 @@ final class PrivateVault {
             } else if let fk = m.fileKey {
                 key = SymmetricKey(data: fk)
             }
-            guard let key, let box = try? AES.GCM.SealedBox(combined: rec.box), let plain = try? AES.GCM.open(box, using: key),
-                  let stored = try? JSONDecoder().decode(StoredClip.self, from: plain), let item = ClipStore.decode(stored) else {
+            guard let key, let box = try? AES.GCM.SealedBox(combined: rec.box), let plain = try? AES.GCM.open(box, using: key) else {
                 failed += 1
                 continue
             }
-            out.append(item)
+            out.append(plain)
         }
-        return (out.sorted { $0.date > $1.date }, failed)
+        return (out, failed)
     }
+}
+
+private final class PlainBox: @unchecked Sendable {
+    let v: [Data]
+    init(_ v: [Data]) { self.v = v }
 }
 
 private final class ContextBox: @unchecked Sendable {
