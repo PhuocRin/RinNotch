@@ -101,12 +101,16 @@ struct FileCardThumb: View {
             if let thumb {
                 Image(nsImage: thumb).resizable().aspectRatio(contentMode: .fill)
                     .frame(width: size.width, height: size.height).clipped()
+                    .contentShape(Rectangle())
             } else {
                 Image(nsImage: NSWorkspace.shared.icon(forFile: url.path)).resizable().aspectRatio(contentMode: .fit)
                     .padding(size.height * 0.16)
             }
         }
         .frame(width: size.width, height: size.height)
+        // Ảnh dẹt (panorama, ảnh chụp một dải) phủ kín thì phần tràn ra ngoài vẫn "nhận" chuột dù đã cắt hình,
+        // đè lên thẻ bên cạnh làm thẻ đó không bấm / chuột phải được. Ảnh xem trước không cần nhận chuột.
+        .allowsHitTesting(false)
         .task(id: url) {
             let scale = NSScreen.main?.backingScaleFactor ?? 2
             let req = QLThumbnailGenerator.Request(fileAt: url, size: size, scale: scale, representationTypes: .thumbnail)

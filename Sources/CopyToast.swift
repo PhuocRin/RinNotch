@@ -60,7 +60,7 @@ final class CopyToast: ObservableObject {
     }
 
     func show(_ item: ClipItem, model m: NotchModel) {
-        guard Prefs.showCopyToast, !m.hidden, !m.expanded, m.transient == nil, m.keyboardLockUntil == nil else { return }
+        guard Prefs.showCopyToast, !m.hidden, !m.fullscreenHidden, !m.expanded, m.transient == nil, m.keyboardLockUntil == nil else { return }
         guard let panel else { return }
         if self.item == nil { panel.orderFrontRegardless() }
         hovering = false
@@ -211,7 +211,7 @@ struct CopyPill: View {
         switch item.kind {
         case .image(let img):
             Image(nsImage: img.thumb).resizable().aspectRatio(contentMode: .fill)
-                .frame(width: 22, height: 18).clipShape(RoundedRectangle(cornerRadius: 4))
+                .frame(width: 22, height: 18).clipShape(RoundedRectangle(cornerRadius: 4)).contentShape(Rectangle())
             Text(item.preview).font(.system(size: 12, weight: .medium)).lineLimit(1)
         case .files(let urls):
             Image(systemName: "doc.fill").font(.system(size: 11))

@@ -1166,6 +1166,7 @@ struct ClipCard: View, Equatable {
         case .image(let img):
             Image(nsImage: img.thumb).resizable().aspectRatio(contentMode: .fill)
                 .frame(width: w, height: h).clipped()
+                .contentShape(Rectangle())  // phần ảnh tràn ra không được giành chuột của thẻ bên cạnh
         case .files(let urls):
             VStack(spacing: 6) {
                 FileThumb(url: urls[0]).frame(width: 60, height: 46)
