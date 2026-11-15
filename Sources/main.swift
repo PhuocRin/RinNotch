@@ -3530,8 +3530,12 @@ final class NotchController {
         let p = NSEvent.mouseLocation
         followMouse(p)
         if !model.expanded {
-            // App toàn màn hình: rê lên mép trên là để hiện thanh menu của app đó, không mở tai thỏ (phím tắt vẫn mở được).
-            if model.fullscreenHidden { return }
+            // App toàn màn hình: tai thỏ đang ẩn. Kéo file lên giữa mép trên vẫn mở Kệ file ngay;
+            // rê chuột thì phải dừng ở giữa mép trên một chút mới mở, để rê lướt lên hiện thanh menu của app không bị mở nhầm.
+            if model.fullscreenHidden {
+                fullscreenHover(p)
+                return
+            }
             guard notchRect.contains(p) else { return }
             let pressed = NSEvent.pressedMouseButtons & 1 != 0
             if pressed {
@@ -3557,6 +3561,34 @@ final class NotchController {
                 scheduleCollapse(force: false)
             }
         }
+    }
+
+    /// Rê chuột lúc app toàn màn hình (tai thỏ đang ẩn).
+    private var dwellWork: DispatchWorkItem?
+    private func fullscreenHover(_ p: NSPoint) {
+        guard notchRect.contains(p) else {
+            dwellWork?.cancel()
+            dwellWork = nil
+            return
+        }
+        if NSEvent.pressedMouseButtons & 1 != 0 {
+            dwellWork?.cancel()
+            dwellWork = nil
+            if NSPasteboard(name: .drag).changeCount != dragCountAtDown { expand(tab: .shelf) }
+            return
+        }
+        guard Prefs.openMode != .hotkey, dwellWork == nil else { return }
+        let w = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.dwellWork = nil
+                if !self.model.expanded, self.model.fullscreenHidden, self.notchRect.contains(NSEvent.mouseLocation) {
+                    self.expand(tab: nil)
+                }
+            }
+        }
+        dwellWork = w
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45, execute: w)
     }
 
     private func mouseDown() {
@@ -4027,8 +4059,8 @@ struct SettingsView: View {
                     Toggle(L("Hiện lúc rảnh", "Show when idle"), isOn: $showIdlePill)
                     Toggle(L("Tự ẩn khi app đang toàn màn hình", "Hide while an app is full screen"), isOn: $hideInFullscreen)
                         .onChange(of: hideInFullscreen) { AppDelegate.shared?.controller.layout() }
-                    Text(L("Màn hình không có tai thỏ (MacBook đời cũ, màn hình rời, iPad làm màn hình phụ): Viên thuốc nổi nằm giữa thanh menu; Liền mép trên dính sát mép màn hình, bo hai góc dưới, giống tai thỏ MacBook Air M2 trở về sau (che giữa thanh menu, app nhiều menu thì chọn cỡ Nhỏ). Rê chuột vào để mở, đủ các mục như trên MacBook. Tắt Hiện lúc rảnh thì rê chuột lên giữa mép trên vẫn mở được. App toàn màn hình thì tai thỏ ẩn đi cho khỏi che nội dung, phím tắt vẫn mở được, thông báo thả xuống vẫn hiện.",
-                           "On displays without a notch (older MacBooks, external displays, iPad as a second display): Floating pill sits in the middle of the menu bar; Attached to top hugs the top edge with rounded bottom corners, like the MacBook Air M2 notch (it covers the middle of the menu bar, pick Small for apps with many menus). Hover to open, with every section. With Show when idle off, hovering the middle of the top edge still opens it. While an app is full screen the notch hides so it doesn't cover content; shortcuts still open it and drop-down alerts still show."))
+                    Text(L("Màn hình không có tai thỏ (MacBook đời cũ, màn hình rời, iPad làm màn hình phụ): Viên thuốc nổi nằm giữa thanh menu; Liền mép trên dính sát mép màn hình, bo hai góc dưới, giống tai thỏ MacBook Air M2 trở về sau (che giữa thanh menu, app nhiều menu thì chọn cỡ Nhỏ). Rê chuột vào để mở, đủ các mục như trên MacBook. Tắt Hiện lúc rảnh thì rê chuột lên giữa mép trên vẫn mở được. App toàn màn hình thì tai thỏ ẩn đi cho khỏi che nội dung: rê chuột lên giữa mép trên rồi dừng một chút là mở, kéo file lên đó là mở Kệ file, phím tắt vẫn dùng được, thông báo thả xuống vẫn hiện.",
+                           "On displays without a notch (older MacBooks, external displays, iPad as a second display): Floating pill sits in the middle of the menu bar; Attached to top hugs the top edge with rounded bottom corners, like the MacBook Air M2 notch (it covers the middle of the menu bar, pick Small for apps with many menus). Hover to open, with every section. With Show when idle off, hovering the middle of the top edge still opens it. While an app is full screen the notch hides so it doesn't cover content: rest the pointer at the middle of the top edge for a moment to open it, drag a file there to open the Shelf; shortcuts and drop-down alerts still work."))
                         .noteText()
                 }
 
