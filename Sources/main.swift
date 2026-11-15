@@ -3474,10 +3474,25 @@ final class NotchController {
         layout()
     }
 
+    /// Vùng rê chuột để mở. Chừa thêm 2 điểm phía trên mép màn hình: chuột dí sát mép trên thì toạ độ bằng đúng
+    /// mép (CGRect.contains không tính cạnh trên), nếu không chừa thì dí chuột lên tận cùng lại thành "ra ngoài".
     private var notchRect: CGRect {
         let f = geo.screenFrame
+        // Viên thuốc nổi lúc rảnh (giống Dynamic Island, rất nhỏ): chỉ nhận đúng chỗ viên thuốc + chút lề,
+        // để các icon thanh menu nằm sát hai bên (tai nghe, Wi-Fi…) vẫn bấm được.
+        if model.idleSize.width > 0, !compactShowing {
+            let w = model.idleSize.width + 16
+            let h = geo.topInset + model.idleSize.height + 4
+            return CGRect(x: f.midX - w / 2, y: f.maxY - h, width: w, height: h + 2)
+        }
         let h = geo.height + geo.topInset
-        return CGRect(x: f.midX - geo.width / 2 - 8, y: f.maxY - h - 6, width: geo.width + 16, height: h + 6)
+        return CGRect(x: f.midX - geo.width / 2 - 8, y: f.maxY - h - 6, width: geo.width + 16, height: h + 8)
+    }
+
+    /// Đang hiện dạng gọn hai bên (nhạc, hẹn giờ, ghi âm…): giống điều kiện phase .compact của IslandView.
+    private var compactShowing: Bool {
+        model.stack != nil || model.recording != nil || model.timerCompact || model.downloads != nil
+            || model.musicCompact || model.awakeCompact
     }
 
     private var expandedRect: CGRect {
@@ -3568,10 +3583,14 @@ final class NotchController {
     /// App toàn màn hình (tai thỏ đang ẩn): rê chuột phải dừng ở giữa mép trên một chút mới mở,
     /// để rê lướt lên hiện thanh menu của app không bị bung nhầm. Bình thường thì mở ngay.
     private var dwellWork: DispatchWorkItem?
+    private var dwellSuppressed = false
+    /// Đang ở chế độ phải dừng chuột mới mở.
+    private var dwellZone: Bool { model.fullscreenHidden || !model.physicalNotch }
     private func hover(_ p: NSPoint) {
         guard notchRect.contains(p) else {
             dwellWork?.cancel()
             dwellWork = nil
+            dwellSuppressed = false
             return
         }
         if NSEvent.pressedMouseButtons & 1 != 0 {
@@ -3580,8 +3599,13 @@ final class NotchController {
             if NSPasteboard(name: .drag).changeCount != dragCountAtDown { expand(tab: .shelf) }
             return
         }
+        if dwellSuppressed { return }
         guard Prefs.openMode != .hotkey, dwellWork == nil else { return }
-        guard model.fullscreenHidden else {
+        // Mở ngay: màn hình có tai thỏ thật (vùng tai thỏ không có icon thanh menu nào).
+        // Dừng một chút: app toàn màn hình (rê lên để hiện thanh menu của app) và màn hình không tai thỏ
+        // (viên thuốc nằm giữa thanh menu, icon hai bên phải bấm được; bấm chuột trong lúc chờ là huỷ).
+        let delay: Double? = model.fullscreenHidden ? 0.4 : (model.physicalNotch ? nil : 0.3)
+        guard let delay else {
             expand(tab: nil)
             return
         }
@@ -3596,11 +3620,16 @@ final class NotchController {
             }
         }
         dwellWork = w
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: w)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: w)
     }
 
     private func mouseDown() {
         dragCountAtDown = NSPasteboard(name: .drag).changeCount
+        // Bấm vào icon thanh menu nằm cạnh viên thuốc trong lúc đang chờ mở: người ta muốn bấm icon, không mở tai thỏ.
+        dwellWork?.cancel()
+        dwellWork = nil
+        // Bấm ngay trên vùng viên thuốc (icon thanh menu bị che một phần): chuột chưa ra khỏi vùng thì không tự mở nữa.
+        if !model.expanded, dwellZone, notchRect.contains(NSEvent.mouseLocation) { dwellSuppressed = true }
         if model.expanded && !expandedRect.contains(NSEvent.mouseLocation) {
             collapse()
         }
@@ -4067,8 +4096,8 @@ struct SettingsView: View {
                         }
                     }
                     Toggle(L("Hiện lúc rảnh", "Show when idle"), isOn: $showIdlePill)
-                    Text(L("Màn hình không có tai thỏ (MacBook đời cũ, màn hình rời, iPad làm màn hình phụ): Viên thuốc nổi nằm giữa thanh menu, cỡ và khoảng cách mép trên theo Dynamic Island của MacBook Pro mới; Liền mép trên dính sát mép màn hình, bo hai góc dưới, giống tai thỏ MacBook Air M2 trở về sau (che giữa thanh menu, app nhiều menu thì chọn cỡ Nhỏ). Rê chuột vào để mở, đủ các mục như trên MacBook. Tắt Hiện lúc rảnh thì rê chuột lên giữa mép trên vẫn mở được.",
-                           "On displays without a notch (older MacBooks, external displays, iPad as a second display): Floating pill sits in the middle of the menu bar, sized and placed like the Dynamic Island on the new MacBook Pro; Attached to top hugs the top edge with rounded bottom corners, like the MacBook Air M2 notch (it covers the middle of the menu bar, pick Small for apps with many menus). Hover to open, with every section. With Show when idle off, hovering the middle of the top edge still opens it."))
+                    Text(L("Màn hình không có tai thỏ (MacBook đời cũ, màn hình rời, iPad làm màn hình phụ): Viên thuốc nổi nằm giữa thanh menu, cỡ và khoảng cách mép trên theo Dynamic Island của MacBook Pro mới; Liền mép trên dính sát mép màn hình, bo hai góc dưới, giống tai thỏ MacBook Air M2 trở về sau (che giữa thanh menu, app nhiều menu thì chọn cỡ Nhỏ). Rê chuột vào viên thuốc, dừng một chút là mở (icon thanh menu nằm sát hai bên vẫn bấm được), đủ các mục như trên MacBook. Tắt Hiện lúc rảnh thì rê chuột lên giữa mép trên vẫn mở được.",
+                           "On displays without a notch (older MacBooks, external displays, iPad as a second display): Floating pill sits in the middle of the menu bar, sized and placed like the Dynamic Island on the new MacBook Pro; Attached to top hugs the top edge with rounded bottom corners, like the MacBook Air M2 notch (it covers the middle of the menu bar, pick Small for apps with many menus). Rest the pointer on it for a moment to open (menu bar icons right beside it stay clickable), with every section. With Show when idle off, hovering the middle of the top edge still opens it."))
                         .noteText()
                 }
 
