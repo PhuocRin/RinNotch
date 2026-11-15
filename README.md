@@ -23,7 +23,7 @@ Trang tải và hướng dẫn cài có hình: https://phuocrin.com/rinnotch/
 - **Mở cùng máy**: bật sẵn từ lần mở đầu tiên, tắt trong Cài đặt nếu không cần.
 - **Màn hình không tai thỏ**: MacBook đời cũ, màn hình rời, iPad làm màn hình phụ (Sidecar), Mac mini / iMac: RinNotch hiện dạng viên thuốc nổi giữa thanh menu, hoặc kiểu **Liền mép trên** dính sát mép màn hình, bo hai góc dưới giống tai thỏ MacBook Air M2 (chọn kiểu và cỡ Nhỏ / Vừa trong Cài đặt). Rê chuột vào để mở, đủ các mục như trên MacBook. App toàn màn hình thì tai thỏ tự ẩn cho khỏi che thanh địa chỉ, nội dung: rê chuột lên giữa mép trên rồi dừng một chút là mở, kéo file lên đó là mở Kệ file, phím tắt vẫn dùng được (tắt tự ẩn trong Cài đặt). Có nhiều màn hình thì tai thỏ / viên thuốc đi theo màn hình có chuột (tắt được trong Cài đặt).
 - **Phím tắt**: ⌃⇧1 → ⌃⇧9 mở thẳng Nhạc, Kệ file, Bộ nhớ tạm, Ghi chú, Hẹn giờ, Hệ thống, Công cụ, Dịch nhanh, Cửa sổ (bấm lại để đóng). Tai thỏ đang mở thì bấm số 1–9 để chuyển mục. ⌃⇧0 mở bảng lớn chứa hết Bộ nhớ tạm và Kệ file. ⌥⌘N ẩn / hiện, Esc thu lại. Đổi hoặc tắt từng phím trong Cài đặt. Bộ ⌃⇧ + số được chọn vì không trùng phím của Final Cut Pro, Finder và phím mặc định của macOS.
-- **Cài đặt**: cách mở tai thỏ (rê chuột, phím tắt hoặc cả hai), bật / tắt từng loại hiển thị, chọn mục mở khi rê chuột, mở cùng máy.
+- **Cài đặt**: cách mở tai thỏ (rê chuột, phím tắt hoặc cả hai; rê chuột thì dừng một chút mới mở cho khỏi mở nhầm, hoặc mở ngay), bật / tắt từng loại hiển thị, chọn mục mở khi rê chuột, mở cùng máy.
 - **Mẹo dùng**: tự mở một lần khi cài, mở lại từ thanh menu → Mẹo dùng hoặc nút ? trên tai thỏ (mở đúng mục đang xem).
 - Tự cập nhật (gói cập nhật được ký số, kiểm tra trước khi cài), Báo lỗi kèm nhật ký, Ủng hộ tác giả.
 

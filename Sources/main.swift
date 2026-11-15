@@ -3530,22 +3530,7 @@ final class NotchController {
         let p = NSEvent.mouseLocation
         followMouse(p)
         if !model.expanded {
-            // App toàn màn hình: tai thỏ đang ẩn. Kéo file lên giữa mép trên vẫn mở Kệ file ngay;
-            // rê chuột thì phải dừng ở giữa mép trên một chút mới mở, để rê lướt lên hiện thanh menu của app không bị mở nhầm.
-            if model.fullscreenHidden {
-                fullscreenHover(p)
-                return
-            }
-            guard notchRect.contains(p) else { return }
-            let pressed = NSEvent.pressedMouseButtons & 1 != 0
-            if pressed {
-                // Đang kéo file từ nơi khác lên tai thỏ → mở kệ file (cách mở nào cũng được).
-                if NSPasteboard(name: .drag).changeCount != dragCountAtDown {
-                    expand(tab: .shelf)
-                }
-            } else if Prefs.openMode != .hotkey {
-                expand(tab: nil)
-            }
+            hover(p)
         } else if keyboardOpen {
             // Mở bằng phím: chuột vào rồi ra mới tự thu, chuột chưa vào thì giữ nguyên.
             if expandedRect.contains(p) {
@@ -3563,9 +3548,11 @@ final class NotchController {
         }
     }
 
-    /// Rê chuột lúc app toàn màn hình (tai thỏ đang ẩn).
+    /// Rê chuột lên tai thỏ (chưa bung). Kéo file lên thì mở Kệ file ngay (cách mở nào cũng được).
+    /// Rê chuột thì dừng một chút mới mở (Cài đặt, mặc định bật; app toàn màn hình thì luôn dừng):
+    /// rê lướt qua mép trên (lên thanh menu, kéo cửa sổ) không bị bung nhầm.
     private var dwellWork: DispatchWorkItem?
-    private func fullscreenHover(_ p: NSPoint) {
+    private func hover(_ p: NSPoint) {
         guard notchRect.contains(p) else {
             dwellWork?.cancel()
             dwellWork = nil
@@ -3578,17 +3565,22 @@ final class NotchController {
             return
         }
         guard Prefs.openMode != .hotkey, dwellWork == nil else { return }
+        guard Prefs.hoverDelay || model.fullscreenHidden else {
+            expand(tab: nil)
+            return
+        }
         let w = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.dwellWork = nil
-                if !self.model.expanded, self.model.fullscreenHidden, self.notchRect.contains(NSEvent.mouseLocation) {
+                if !self.model.expanded, !self.model.hidden, self.notchRect.contains(NSEvent.mouseLocation),
+                   NSEvent.pressedMouseButtons & 1 == 0 {
                     self.expand(tab: nil)
                 }
             }
         }
         dwellWork = w
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45, execute: w)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: w)
     }
 
     private func mouseDown() {
@@ -3775,6 +3767,8 @@ enum Prefs {
     static var islandStyle: IslandStyle { IslandStyle(rawValue: d.string(forKey: "islandStyle") ?? "") ?? .pill }
     static var islandSize: IslandSize { IslandSize(rawValue: d.string(forKey: "islandSize") ?? "") ?? .medium }
     static var hideInFullscreen: Bool { bool("hideInFullscreen") }
+    /// Rê chuột lên tai thỏ phải dừng một chút (0,4 giây) mới bung.
+    static var hoverDelay: Bool { bool("hoverDelay") }
     static var awakeStopLowBattery: Bool { bool("awakeStopLowBattery") }
     static var awakeStopOnSleep: Bool { bool("awakeStopOnSleep") }
     static var clipLimit: Int { max(d.object(forKey: "clipLimit") as? Int ?? 50, 10) }
@@ -3992,6 +3986,7 @@ struct SettingsView: View {
     @AppStorage("islandStyle") private var islandStyle = IslandStyle.pill.rawValue
     @AppStorage("islandSize") private var islandSize = IslandSize.medium.rawValue
     @AppStorage("hideInFullscreen") private var hideInFullscreen = true
+    @AppStorage("hoverDelay") private var hoverDelay = true
     @AppStorage("defaultTab") private var defaultTab = "last"
     @AppStorage("openMode") private var openMode = OpenMode.both.rawValue
     @AppStorage("clipLimit") private var clipLimit = 50
@@ -4018,6 +4013,7 @@ struct SettingsView: View {
                     .onChange(of: openMode) { HotkeyCenter.registerAll() }
                     Text(openModeNote).noteText()
                     if openMode != OpenMode.hotkey.rawValue {
+                        Toggle(L("Dừng chuột một chút rồi mới mở (rê lướt qua không bị mở nhầm)", "Rest the pointer briefly before opening (no accidental opens)"), isOn: $hoverDelay)
                         HStack {
                             Text(L("Rê chuột lên tai thỏ thì mở", "On hover, open")).font(.system(size: 13))
                             Spacer()
@@ -4340,8 +4336,8 @@ enum TipTopic: String, CaseIterable, Identifiable {
     var tips: [(String, String)] {
         switch self {
         case .start: return [
-            ("cursorarrow.rays", L("Rê chuột lên tai thỏ để mở, rê ra ngoài là tự thu lại. Máy không có tai thỏ thì rê lên giữa cạnh trên màn hình.",
-                                  "Hover over the notch to open it, move away to close. On Macs without a notch, hover the middle of the top edge.")),
+            ("cursorarrow.rays", L("Rê chuột lên tai thỏ, dừng một chút là mở (rê lướt qua không bị mở nhầm; muốn mở ngay thì tắt trong Cài đặt), rê ra ngoài là tự thu lại. Máy không có tai thỏ thì rê lên giữa cạnh trên màn hình.",
+                                  "Rest the pointer on the notch for a moment to open it (passing over won't open it; turn this off in Settings to open instantly), move away to close. On Macs without a notch, use the middle of the top edge.")),
             ("display.2", L("Màn hình không tai thỏ (MacBook đời cũ, màn hình rời, iPad làm màn hình phụ): RinNotch hiện viên thuốc giữa thanh menu, hoặc kiểu Liền mép trên giống tai thỏ MacBook Air M2 (Cài đặt → Kiểu). App toàn màn hình thì tự ẩn cho khỏi che nội dung. Có nhiều màn hình thì nó đi theo màn hình có chuột.",
                            "Displays without a notch (older MacBooks, external monitors, iPad as a display): RinNotch shows a pill in the middle of the menu bar, or an Attached style like the MacBook Air M2 notch (Settings → Style). It hides while an app is full screen. With several displays it follows the pointer.")),
             ("tray.and.arrow.down", L("Kéo file thả lên tai thỏ là mở ngay Kệ file.",
