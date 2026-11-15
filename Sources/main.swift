@@ -3481,8 +3481,8 @@ final class NotchController {
         // Viên thuốc nổi lúc rảnh (giống Dynamic Island, rất nhỏ): chỉ nhận đúng chỗ viên thuốc + chút lề,
         // để các icon thanh menu nằm sát hai bên (tai nghe, Wi-Fi…) vẫn bấm được.
         if model.idleSize.width > 0, !compactShowing {
-            let w = model.idleSize.width + 16
-            let h = geo.topInset + model.idleSize.height + 4
+            let w: CGFloat = model.idleSize.width + 16
+            let h: CGFloat = geo.topInset + model.idleSize.height + 4
             return CGRect(x: f.midX - w / 2, y: f.maxY - h, width: w, height: h + 2)
         }
         let h = geo.height + geo.topInset
@@ -3491,8 +3491,12 @@ final class NotchController {
 
     /// Đang hiện dạng gọn hai bên (nhạc, hẹn giờ, ghi âm…): giống điều kiện phase .compact của IslandView.
     private var compactShowing: Bool {
-        model.stack != nil || model.recording != nil || model.timerCompact || model.downloads != nil
-            || model.musicCompact || model.awakeCompact
+        if model.stack != nil { return true }
+        if model.recording != nil { return true }
+        if model.downloads != nil { return true }
+        if model.timerCompact { return true }
+        if model.musicCompact { return true }
+        return model.awakeCompact
     }
 
     private var expandedRect: CGRect {
@@ -3604,8 +3608,13 @@ final class NotchController {
         // Mở ngay: màn hình có tai thỏ thật (vùng tai thỏ không có icon thanh menu nào).
         // Dừng một chút: app toàn màn hình (rê lên để hiện thanh menu của app) và màn hình không tai thỏ
         // (viên thuốc nằm giữa thanh menu, icon hai bên phải bấm được; bấm chuột trong lúc chờ là huỷ).
-        let delay: Double? = model.fullscreenHidden ? 0.4 : (model.physicalNotch ? nil : 0.3)
-        guard let delay else {
+        var delay: Double = 0
+        if model.fullscreenHidden {
+            delay = 0.4
+        } else if !model.physicalNotch {
+            delay = 0.3
+        }
+        if delay == 0 {
             expand(tab: nil)
             return
         }
