@@ -1,6 +1,6 @@
-// Tự ẩn tai thỏ khi app đang toàn màn hình, CHỈ trên màn hình không có tai thỏ thật
-// (MacBook đời cũ, màn hình rời, iPad làm màn hình phụ). Ở đó viên thuốc / tai thỏ giả nằm đè lên nội dung app
-// (thanh địa chỉ Safari, thanh tab Chrome…). MacBook có tai thỏ thì app toàn màn hình đã nằm dưới tai thỏ, không cần ẩn.
+// Tự ẩn tai thỏ khi app đang toàn màn hình, trên mọi màn hình (Phước chốt 15/11/2026).
+// Màn hình không tai thỏ: viên thuốc / tai thỏ giả nằm đè lên nội dung app (thanh địa chỉ Safari, thanh tab Chrome…).
+// MacBook có tai thỏ: app toàn màn hình nằm dưới tai thỏ, ẩn cho gọn (dạng gọn nhạc, hẹn giờ… không còn nổi trên dải đen).
 //
 // Dò theo sự kiện, không chạy nhịp lặp: đổi Space (vào / thoát toàn màn hình là đổi Space), đổi app, app thoát,
 // đổi màn hình. Mỗi lần chỉ đọc danh sách cửa sổ một lần (chủ cửa sổ + khung, không cần quyền Ghi màn hình).
@@ -46,11 +46,12 @@ final class FullscreenWatcher {
     }
 
     func check() {
-        guard let g = geometry(), Prefs.hideInFullscreen, !g.physical, g.screenFrame.width > 0 else {
+        guard let g = geometry(), Prefs.hideInFullscreen, g.screenFrame.width > 0 else {
             set(false)
             return
         }
-        set(Self.isFullscreen(on: g.screenFrame))
+        let inset = NSScreen.screens.first(where: { $0.frame == g.screenFrame })?.safeAreaInsets.top ?? 0
+        set(Self.isFullscreen(on: g.screenFrame, notchInset: inset))
     }
 
     private func set(_ v: Bool) {
@@ -61,13 +62,26 @@ final class FullscreenWatcher {
     }
 
     /// Cửa sổ thường (layer 0) đứng trước nhất trên màn hình này có phủ kín cả màn hình không.
-    static func isFullscreen(on frame: CGRect) -> Bool {
+    /// Màn hình có tai thỏ: app toàn màn hình mặc định nằm dưới dải tai thỏ (chừa `notchInset` ở trên), giống hệt
+    /// một cửa sổ phóng to khi Dock ẩn, nên phải xem thêm thanh menu: toàn màn hình thì thanh menu không hiện.
+    static func isFullscreen(on frame: CGRect, notchInset: CGFloat) -> Bool {
         // Toạ độ danh sách cửa sổ: gốc trên trái của màn hình chính.
         guard let main = NSScreen.screens.first else { return false }
         let target = CGRect(x: frame.minX, y: main.frame.maxY - frame.maxY, width: frame.width, height: frame.height)
         guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
                 as? [[String: Any]] else { return false }
         let me = ProcessInfo.processInfo.processIdentifier
+        let menuLevel = Int(CGWindowLevelForKey(.mainMenuWindow))
+        let topStrip = CGRect(x: target.minX, y: target.minY, width: target.width, height: max(notchInset, 24))
+        if notchInset > 0 {
+            for w in list {
+                guard (w[kCGWindowLayer as String] as? Int) == menuLevel,
+                      let dict = w[kCGWindowBounds as String] as? NSDictionary,
+                      let r = CGRect(dictionaryRepresentation: dict as CFDictionary),
+                      r.intersects(topStrip), r.width > target.width / 2 else { continue }
+                return false   // thanh menu đang hiện trên màn hình này → không phải toàn màn hình
+            }
+        }
         for w in list {
             guard (w[kCGWindowLayer as String] as? Int) == 0,
                   (w[kCGWindowOwnerPID as String] as? Int).map({ pid_t($0) }) != me,
@@ -76,9 +90,11 @@ final class FullscreenWatcher {
                   let r = CGRect(dictionaryRepresentation: dict as CFDictionary),
                   r.width > 100, r.height > 100,
                   r.intersection(target).width > target.width / 2 else { continue }
-            // Cửa sổ đầu tiên (đứng trước nhất) trên màn hình này: phủ kín cả màn hình, kể cả chỗ thanh menu = toàn màn hình.
-            return abs(r.minX - target.minX) < 2 && abs(r.minY - target.minY) < 2
-                && abs(r.width - target.width) < 2 && abs(r.height - target.height) < 2
+            // Cửa sổ đầu tiên (đứng trước nhất) trên màn hình này: phủ kín bề ngang, chạm đáy, mép trên ở sát mép màn hình
+            // (hoặc ngay dưới dải tai thỏ) = toàn màn hình.
+            return abs(r.minX - target.minX) < 2 && abs(r.width - target.width) < 2
+                && abs(r.maxY - target.maxY) < 2
+                && r.minY >= target.minY - 1 && r.minY <= target.minY + notchInset + 2
         }
         return false
     }

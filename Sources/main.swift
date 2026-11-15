@@ -25,10 +25,11 @@ struct NotchGeometry {
     let height: CGFloat
     /// Màn hình có tai thỏ thật (MacBook có notch). false = màn hình rời, iPad, MacBook đời cũ…
     var physical: Bool = true
-
-    /// Màn hình không tai thỏ (màn hình rời, iPad làm màn hình phụ, Mac mini…): dạng viên thuốc nổi
-    /// cách mép trên một chút, bo tròn cả bốn góc, nằm giữa thanh menu.
-    var topInset: CGFloat { hasNotch ? 0 : 3 }
+    /// Viên thuốc nổi: khoảng cách tới mép trên màn hình (tai thỏ thật / Liền mép trên = 0).
+    var topInset: CGFloat = 0
+    /// Cỡ vẽ lúc rảnh (viên thuốc nhỏ hơn vùng rê chuột). 0 = bằng width / height.
+    var idleWidth: CGFloat = 0
+    var idleHeight: CGFloat = 0
 
     /// Màn hình mặc định: màn hình có tai thỏ, không có thì màn hình chính.
     static func current() -> NotchGeometry {
@@ -48,14 +49,22 @@ struct NotchGeometry {
         // Thanh menu ẩn (app toàn màn hình, tự ẩn thanh menu) thì lấy 24.
         let menuH = s.frame.maxY - s.visibleFrame.maxY
         let bar = menuH >= 20 && menuH <= 60 ? menuH : 24
-        let small = Prefs.islandSize == .small
         if Prefs.islandStyle == .attached {
+            let small = Prefs.islandSize == .small
             // "Liền mép trên": khối đen dính sát mép màn hình, cao bằng thanh menu, bo hai góc dưới,
             // giống tai thỏ MacBook Air M2 trở về sau. Vẽ y như tai thỏ thật.
             return NotchGeometry(screenFrame: s.frame, hasNotch: true, width: small ? 150 : 190, height: bar, physical: false)
         }
-        // Viên thuốc nổi giữa thanh menu.
-        return NotchGeometry(screenFrame: s.frame, hasNotch: false, width: small ? 80 : 110, height: max(bar - 4, 22), physical: false)
+        // Viên thuốc nổi giữa thanh menu, cỡ và khoảng cách mép trên theo Dynamic Island của MacBook Pro PROLED XDR
+        // (đo trên ảnh Apple chụp thẳng màn hình: thanh menu 36, viên thuốc 48 × 26, cách mép trên 6,5 px).
+        // Quy theo chiều cao thanh menu để màn hình nào cũng đúng tỉ lệ.
+        let idleH = (bar * 26 / 36).rounded()
+        let gap = (bar * 6.5 / 36).rounded()
+        var g = NotchGeometry(screenFrame: s.frame, hasNotch: false, width: 110, height: max(bar - gap - 1, 19), physical: false)
+        g.topInset = gap
+        g.idleHeight = idleH
+        g.idleWidth = (idleH * 48 / 26).rounded()
+        return g
     }
 }
 
@@ -235,6 +244,9 @@ final class NotchModel: ObservableObject {
     @Published var fullscreenHidden = false
     @Published var notchWidth: CGFloat = 190
     @Published var notchHeight: CGFloat = 32
+    /// Cỡ vẽ lúc rảnh và khoảng cách mép trên (viên thuốc nổi giống Dynamic Island).
+    @Published var idleSize: CGSize = .zero
+    @Published var topInset: CGFloat = 0
     @Published var shelf: [URL] = []
     @Published var shelfSelection: Set<URL> = []
     var shelfAnchor: URL?
@@ -568,7 +580,9 @@ struct IslandView: View {
 
     var size: CGSize {
         switch phase {
-        case .idle: return CGSize(width: m.notchWidth, height: m.notchHeight)
+        case .idle:
+            if m.idleSize.width > 0 { return m.idleSize }
+            return CGSize(width: m.notchWidth, height: m.notchHeight)
         case .compact:
             let wide = m.stack != nil || m.recording != nil || m.timerCompact || m.downloads != nil
             // Viên thuốc không có tai thỏ ở giữa nên hai bên đứng sát nhau hơn.
@@ -648,7 +662,7 @@ struct IslandView: View {
                 .shadow(color: .black.opacity(phase == .idle ? (m.hasNotch ? 0 : 0.25) : 0.45),
                         radius: phase == .idle ? 4 : 18, x: 0, y: phase == .idle ? 1 : 8)
         )
-        .padding(.top, m.hasNotch ? 0 : 3)
+        .padding(.top, m.topInset)
         .opacity((m.hidden || idleHidden || fullscreenHidden) ? 0 : 1)
         .animation(.spring(response: 0.36, dampingFraction: 0.8), value: phase)
         .animation(.spring(response: 0.36, dampingFraction: 0.8), value: m.transient)
@@ -3431,6 +3445,8 @@ final class NotchController {
         geo = target.map { NotchGeometry.of($0) } ?? NotchGeometry.current()
         model.hasNotch = geo.hasNotch
         model.physicalNotch = geo.physical
+        model.topInset = geo.topInset
+        model.idleSize = geo.idleWidth > 0 ? CGSize(width: geo.idleWidth, height: geo.idleHeight) : .zero
         model.notchWidth = geo.width
         model.notchHeight = geo.height
         let f = geo.screenFrame
@@ -3549,8 +3565,8 @@ final class NotchController {
     }
 
     /// Rê chuột lên tai thỏ (chưa bung). Kéo file lên thì mở Kệ file ngay (cách mở nào cũng được).
-    /// Rê chuột thì dừng một chút mới mở (Cài đặt, mặc định bật; app toàn màn hình thì luôn dừng):
-    /// rê lướt qua mép trên (lên thanh menu, kéo cửa sổ) không bị bung nhầm.
+    /// App toàn màn hình (tai thỏ đang ẩn): rê chuột phải dừng ở giữa mép trên một chút mới mở,
+    /// để rê lướt lên hiện thanh menu của app không bị bung nhầm. Bình thường thì mở ngay.
     private var dwellWork: DispatchWorkItem?
     private func hover(_ p: NSPoint) {
         guard notchRect.contains(p) else {
@@ -3565,7 +3581,7 @@ final class NotchController {
             return
         }
         guard Prefs.openMode != .hotkey, dwellWork == nil else { return }
-        guard Prefs.hoverDelay || model.fullscreenHidden else {
+        guard model.fullscreenHidden else {
             expand(tab: nil)
             return
         }
@@ -3767,8 +3783,6 @@ enum Prefs {
     static var islandStyle: IslandStyle { IslandStyle(rawValue: d.string(forKey: "islandStyle") ?? "") ?? .pill }
     static var islandSize: IslandSize { IslandSize(rawValue: d.string(forKey: "islandSize") ?? "") ?? .medium }
     static var hideInFullscreen: Bool { bool("hideInFullscreen") }
-    /// Rê chuột lên tai thỏ phải dừng một chút (0,4 giây) mới bung.
-    static var hoverDelay: Bool { bool("hoverDelay") }
     static var awakeStopLowBattery: Bool { bool("awakeStopLowBattery") }
     static var awakeStopOnSleep: Bool { bool("awakeStopOnSleep") }
     static var clipLimit: Int { max(d.object(forKey: "clipLimit") as? Int ?? 50, 10) }
@@ -3986,7 +4000,6 @@ struct SettingsView: View {
     @AppStorage("islandStyle") private var islandStyle = IslandStyle.pill.rawValue
     @AppStorage("islandSize") private var islandSize = IslandSize.medium.rawValue
     @AppStorage("hideInFullscreen") private var hideInFullscreen = true
-    @AppStorage("hoverDelay") private var hoverDelay = true
     @AppStorage("defaultTab") private var defaultTab = "last"
     @AppStorage("openMode") private var openMode = OpenMode.both.rawValue
     @AppStorage("clipLimit") private var clipLimit = 50
@@ -4013,7 +4026,6 @@ struct SettingsView: View {
                     .onChange(of: openMode) { HotkeyCenter.registerAll() }
                     Text(openModeNote).noteText()
                     if openMode != OpenMode.hotkey.rawValue {
-                        Toggle(L("Dừng chuột một chút rồi mới mở (rê lướt qua không bị mở nhầm)", "Rest the pointer briefly before opening (no accidental opens)"), isOn: $hoverDelay)
                         HStack {
                             Text(L("Rê chuột lên tai thỏ thì mở", "On hover, open")).font(.system(size: 13))
                             Spacer()
@@ -4041,22 +4053,30 @@ struct SettingsView: View {
                         .frame(width: 240)
                         .onChange(of: islandStyle) { AppDelegate.shared?.controller.layout() }
                     }
-                    HStack {
-                        Text(L("Cỡ", "Size")).font(.system(size: 13))
-                        Spacer()
-                        Picker("", selection: $islandSize) {
-                            ForEach(IslandSize.allCases, id: \.rawValue) { Text($0.title).tag($0.rawValue) }
+                    if islandStyle == IslandStyle.attached.rawValue {
+                        HStack {
+                            Text(L("Cỡ", "Size")).font(.system(size: 13))
+                            Spacer()
+                            Picker("", selection: $islandSize) {
+                                ForEach(IslandSize.allCases, id: \.rawValue) { Text($0.title).tag($0.rawValue) }
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                            .frame(width: 240)
+                            .onChange(of: islandSize) { AppDelegate.shared?.controller.layout() }
                         }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                        .frame(width: 240)
-                        .onChange(of: islandSize) { AppDelegate.shared?.controller.layout() }
                     }
                     Toggle(L("Hiện lúc rảnh", "Show when idle"), isOn: $showIdlePill)
-                    Toggle(L("Tự ẩn khi app đang toàn màn hình", "Hide while an app is full screen"), isOn: $hideInFullscreen)
+                    Text(L("Màn hình không có tai thỏ (MacBook đời cũ, màn hình rời, iPad làm màn hình phụ): Viên thuốc nổi nằm giữa thanh menu, cỡ và khoảng cách mép trên theo Dynamic Island của MacBook Pro mới; Liền mép trên dính sát mép màn hình, bo hai góc dưới, giống tai thỏ MacBook Air M2 trở về sau (che giữa thanh menu, app nhiều menu thì chọn cỡ Nhỏ). Rê chuột vào để mở, đủ các mục như trên MacBook. Tắt Hiện lúc rảnh thì rê chuột lên giữa mép trên vẫn mở được.",
+                           "On displays without a notch (older MacBooks, external displays, iPad as a second display): Floating pill sits in the middle of the menu bar, sized and placed like the Dynamic Island on the new MacBook Pro; Attached to top hugs the top edge with rounded bottom corners, like the MacBook Air M2 notch (it covers the middle of the menu bar, pick Small for apps with many menus). Hover to open, with every section. With Show when idle off, hovering the middle of the top edge still opens it."))
+                        .noteText()
+                }
+
+                section(L("Khi app toàn màn hình", "When an app is full screen")) {
+                    Toggle(L("Tự ẩn tai thỏ", "Hide the notch"), isOn: $hideInFullscreen)
                         .onChange(of: hideInFullscreen) { AppDelegate.shared?.controller.layout() }
-                    Text(L("Màn hình không có tai thỏ (MacBook đời cũ, màn hình rời, iPad làm màn hình phụ): Viên thuốc nổi nằm giữa thanh menu; Liền mép trên dính sát mép màn hình, bo hai góc dưới, giống tai thỏ MacBook Air M2 trở về sau (che giữa thanh menu, app nhiều menu thì chọn cỡ Nhỏ). Rê chuột vào để mở, đủ các mục như trên MacBook. Tắt Hiện lúc rảnh thì rê chuột lên giữa mép trên vẫn mở được. App toàn màn hình thì tai thỏ ẩn đi cho khỏi che nội dung: rê chuột lên giữa mép trên rồi dừng một chút là mở, kéo file lên đó là mở Kệ file, phím tắt vẫn dùng được, thông báo thả xuống vẫn hiện.",
-                           "On displays without a notch (older MacBooks, external displays, iPad as a second display): Floating pill sits in the middle of the menu bar; Attached to top hugs the top edge with rounded bottom corners, like the MacBook Air M2 notch (it covers the middle of the menu bar, pick Small for apps with many menus). Hover to open, with every section. With Show when idle off, hovering the middle of the top edge still opens it. While an app is full screen the notch hides so it doesn't cover content: rest the pointer at the middle of the top edge for a moment to open it, drag a file there to open the Shelf; shortcuts and drop-down alerts still work."))
+                    Text(L("App toàn màn hình (Safari, video, Final Cut…) thì tai thỏ ẩn đi cho khỏi che nội dung. Rê chuột lên giữa mép trên rồi dừng một chút là mở (rê lướt lên để hiện thanh menu của app thì không bị mở nhầm), kéo file lên đó là mở Kệ file, phím tắt vẫn dùng được, thông báo thả xuống vẫn hiện.",
+                           "While an app is full screen (Safari, video, Final Cut…) the notch hides so it doesn't cover content. Rest the pointer at the middle of the top edge for a moment to open it (passing over to reveal the app's menu bar won't open it), drag a file there to open the Shelf; shortcuts and drop-down alerts still work."))
                         .noteText()
                 }
 
@@ -4336,10 +4356,10 @@ enum TipTopic: String, CaseIterable, Identifiable {
     var tips: [(String, String)] {
         switch self {
         case .start: return [
-            ("cursorarrow.rays", L("Rê chuột lên tai thỏ, dừng một chút là mở (rê lướt qua không bị mở nhầm; muốn mở ngay thì tắt trong Cài đặt), rê ra ngoài là tự thu lại. Máy không có tai thỏ thì rê lên giữa cạnh trên màn hình.",
-                                  "Rest the pointer on the notch for a moment to open it (passing over won't open it; turn this off in Settings to open instantly), move away to close. On Macs without a notch, use the middle of the top edge.")),
-            ("display.2", L("Màn hình không tai thỏ (MacBook đời cũ, màn hình rời, iPad làm màn hình phụ): RinNotch hiện viên thuốc giữa thanh menu, hoặc kiểu Liền mép trên giống tai thỏ MacBook Air M2 (Cài đặt → Kiểu). App toàn màn hình thì tự ẩn cho khỏi che nội dung. Có nhiều màn hình thì nó đi theo màn hình có chuột.",
-                           "Displays without a notch (older MacBooks, external monitors, iPad as a display): RinNotch shows a pill in the middle of the menu bar, or an Attached style like the MacBook Air M2 notch (Settings → Style). It hides while an app is full screen. With several displays it follows the pointer.")),
+            ("cursorarrow.rays", L("Rê chuột lên tai thỏ để mở, rê ra ngoài là tự thu lại. Máy không có tai thỏ thì rê lên giữa cạnh trên màn hình. App đang toàn màn hình thì tai thỏ ẩn đi: rê lên giữa mép trên rồi dừng một chút là mở, kéo file lên đó là mở Kệ file.",
+                                  "Hover over the notch to open it, move away to close. On Macs without a notch, hover the middle of the top edge. While an app is full screen the notch hides: rest the pointer at the middle of the top edge to open it, or drag a file there to open the Shelf.")),
+            ("display.2", L("Màn hình không tai thỏ (MacBook đời cũ, màn hình rời, iPad làm màn hình phụ): RinNotch hiện viên thuốc giữa thanh menu, hoặc kiểu Liền mép trên giống tai thỏ MacBook Air M2 (Cài đặt → Kiểu). Có nhiều màn hình thì nó đi theo màn hình có chuột.",
+                           "Displays without a notch (older MacBooks, external monitors, iPad as a display): RinNotch shows a pill in the middle of the menu bar, or an Attached style like the MacBook Air M2 notch (Settings → Style). With several displays it follows the pointer.")),
             ("tray.and.arrow.down", L("Kéo file thả lên tai thỏ là mở ngay Kệ file.",
                                      "Drop a file on the notch to open the file shelf.")),
             ("keyboard", L("⌃⇧1 → ⌃⇧9 mở thẳng từng mục (8 là Dịch nhanh, 9 là Cửa sổ), bấm lại đúng phím đó để đóng. Đang mở thì bấm số 1–9 để chuyển mục. ⌃⇧0 mở bảng lớn.",
