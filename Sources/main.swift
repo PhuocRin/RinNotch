@@ -4038,6 +4038,7 @@ struct SettingsView: View {
     @AppStorage("islandStyle") private var islandStyle = IslandStyle.pill.rawValue
     @AppStorage("islandSize") private var islandSize = IslandSize.medium.rawValue
     @AppStorage("hideInFullscreen") private var hideInFullscreen = true
+    @State private var axTrusted = Access.trusted
     @AppStorage("defaultTab") private var defaultTab = "last"
     @AppStorage("openMode") private var openMode = OpenMode.both.rawValue
     @AppStorage("clipLimit") private var clipLimit = 50
@@ -4113,6 +4114,28 @@ struct SettingsView: View {
                 section(L("Khi app toàn màn hình", "When an app is full screen")) {
                     Toggle(L("Tự ẩn tai thỏ", "Hide the notch"), isOn: $hideInFullscreen)
                         .onChange(of: hideInFullscreen) { AppDelegate.shared?.controller.layout() }
+                    if hideInFullscreen && !axTrusted {
+                        // Không có quyền Trợ năng thì chỉ đoán theo khung cửa sổ, có app (trình duyệt, game) đoán trật.
+                        HStack(spacing: 8) {
+                            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                            Text(L("Cấp quyền Trợ năng để nhận ra chắc chắn mọi app toàn màn hình (Brave, Chrome…).",
+                                   "Grant Accessibility access to reliably detect every full screen app (Brave, Chrome…)."))
+                                .font(.system(size: 12))
+                                .fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 4)
+                            Button {
+                                Access.prompt()
+                                Access.openSettings()
+                            } label: {
+                                Label(L("Cấp quyền", "Grant"), systemImage: "lock.open")
+                            }
+                            .buttonStyle(PillButton())
+                        }
+                        // Chỉ chạy khi dòng này đang hiện (chưa có quyền): cấp xong thì dòng tự biến mất.
+                        .onReceive(Timer.publish(every: 1.5, on: .main, in: .common).autoconnect()) { _ in
+                            if Access.trusted != axTrusted { axTrusted = Access.trusted }
+                        }
+                    }
                     Text(L("App toàn màn hình (Safari, video, Final Cut…) thì tai thỏ ẩn đi cho khỏi che nội dung. Rê chuột lên giữa mép trên rồi dừng một chút là mở (rê lướt lên để hiện thanh menu của app thì không bị mở nhầm), kéo file lên đó là mở Kệ file, phím tắt vẫn dùng được, thông báo thả xuống vẫn hiện. Đã cấp quyền Trợ năng thì RinNotch nhận ra app toàn màn hình chính xác hơn.",
                            "While an app is full screen (Safari, video, Final Cut…) the notch hides so it doesn't cover content. Rest the pointer at the middle of the top edge for a moment to open it (passing over to reveal the app's menu bar won't open it), drag a file there to open the Shelf; shortcuts and drop-down alerts still work. With Accessibility access RinNotch detects full screen apps more reliably."))
                         .noteText()
