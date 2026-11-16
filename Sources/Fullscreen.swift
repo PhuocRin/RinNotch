@@ -30,13 +30,13 @@ final class FullscreenWatcher {
         }
     }
 
-    /// Kiểm ngay, rồi kiểm lại hai lần: lúc vừa đổi Space, danh sách cửa sổ có khi chưa cập nhật kịp
-    /// (hiệu ứng trượt vào toàn màn hình mất khoảng nửa giây).
+    /// Kiểm ngay, rồi kiểm lại ba lần: lúc vừa đổi Space, danh sách cửa sổ có khi chưa cập nhật kịp
+    /// (hiệu ứng trượt vào toàn màn hình mất khoảng nửa giây, trình duyệt nhân Chromium có khi lâu hơn).
     func checkSoon() {
         pending.forEach { $0.cancel() }
         pending = []
         check()
-        for delay in [0.45, 1.2] {
+        for delay in [0.45, 1.2, 2.5] {
             let w = DispatchWorkItem { [weak self] in
                 MainActor.assumeIsolated { self?.check() }
             }
@@ -47,21 +47,72 @@ final class FullscreenWatcher {
 
     func check() {
         guard let g = geometry(), Prefs.hideInFullscreen, g.screenFrame.width > 0 else {
-            set(false)
+            set(false, why: nil)
             return
         }
         let inset = NSScreen.screens.first(where: { $0.frame == g.screenFrame })?.safeAreaInsets.top ?? 0
-        set(Self.isFullscreen(on: g.screenFrame, notchInset: inset))
+        let app = NSWorkspace.shared.frontmostApplication
+        let name = app?.localizedName ?? "?"
+        // 1. Có quyền Trợ năng: hỏi thẳng cửa sổ đang dùng có đang toàn màn hình không (chính xác, không phải đoán).
+        if let pid = app?.processIdentifier, pid != ProcessInfo.processInfo.processIdentifier,
+           Self.axFullscreen(pid: pid, on: g.screenFrame) == true {
+            set(true, why: "\(name), Trợ năng")
+            return
+        }
+        // 2. Không có quyền, hoặc app tự phủ kín màn hình mà không dùng chế độ toàn màn hình của macOS
+        //    (trình chiếu, game): đoán theo khung cửa sổ.
+        set(Self.isFullscreen(on: g.screenFrame, notchInset: inset),
+            why: "\(name), \(AXIsProcessTrusted() ? "Trợ năng + " : "")khung cửa sổ")
     }
 
-    private func set(_ v: Bool) {
+    private var lastWhy = ""
+    private func set(_ v: Bool, why: String?) {
+        if let why {
+            // Ghi mỗi khi kết quả hoặc app đổi (không ghi lặp), để người dùng báo lỗi thì biết ngay app nào, đo bằng cách nào.
+            let line = "\(v ? "toàn màn hình" : "không") (\(why))"
+            if line != lastWhy { Diag.log("Dò toàn màn hình: \(line)"); lastWhy = line }
+        }
         guard model.fullscreenHidden != v else { return }
         model.fullscreenHidden = v
         Diag.log("Toàn màn hình: \(v ? "ẩn" : "hiện lại") tai thỏ")
         if v { CopyToast.shared.hide() }
     }
 
-    /// Cửa sổ thường (layer 0) đứng trước nhất trên màn hình này có phủ kín cả màn hình không.
+    /// Hỏi Trợ năng: cửa sổ đang dùng (hoặc cửa sổ chính) của app có thuộc tính AXFullScreen = true và nằm trên màn hình này.
+    /// nil = không hỏi được (chưa có quyền, app không trả lời) → dùng cách đoán theo khung cửa sổ.
+    static func axFullscreen(pid: pid_t, on frame: CGRect) -> Bool? {
+        guard AXIsProcessTrusted() else { return nil }
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, 0.25)   // app treo thì không kéo RinNotch treo theo
+        var win: CFTypeRef?
+        if AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &win) != .success || win == nil {
+            guard AXUIElementCopyAttributeValue(app, kAXMainWindowAttribute as CFString, &win) == .success, win != nil else { return nil }
+        }
+        let w = win as! AXUIElement
+        AXUIElementSetMessagingTimeout(w, 0.25)
+        var fs: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(w, "AXFullScreen" as CFString, &fs) == .success,
+              let on = fs as? Bool else { return nil }
+        guard on else { return false }
+        // Cửa sổ toàn màn hình phải nằm trên đúng màn hình RinNotch đang hiện (nhiều màn hình).
+        var posV: CFTypeRef?, sizeV: CFTypeRef?
+        var pos = CGPoint.zero, size = CGSize.zero
+        if AXUIElementCopyAttributeValue(w, kAXPositionAttribute as CFString, &posV) == .success,
+           AXUIElementCopyAttributeValue(w, kAXSizeAttribute as CFString, &sizeV) == .success,
+           let pv = posV, let sv = sizeV {
+            AXValueGetValue(pv as! AXValue, .cgPoint, &pos)
+            AXValueGetValue(sv as! AXValue, .cgSize, &size)
+            guard let main = NSScreen.screens.first else { return true }
+            let target = CGRect(x: frame.minX, y: main.frame.maxY - frame.maxY, width: frame.width, height: frame.height)
+            let r = CGRect(origin: pos, size: size)
+            if r.width > 0, r.intersection(target).width < target.width / 2 { return false }
+        }
+        return true
+    }
+
+    /// Đoán khi không có quyền Trợ năng: app đứng trước nhất trên màn hình này có cửa sổ nào phủ kín màn hình không.
+    /// Xét MỌI cửa sổ của app đó, không chỉ cửa sổ đầu tiên: Chrome, Brave, Edge (nhân Chromium) khi toàn màn hình
+    /// có thêm một cửa sổ riêng nằm trên cùng chứa thanh tab + thanh công cụ trượt xuống, không phủ kín màn hình.
     /// Màn hình có tai thỏ: app toàn màn hình mặc định nằm dưới dải tai thỏ (chừa `notchInset` ở trên), giống hệt
     /// một cửa sổ phóng to khi Dock ẩn, nên phải xem thêm thanh menu: toàn màn hình thì thanh menu không hiện.
     static func isFullscreen(on frame: CGRect, notchInset: CGFloat) -> Bool {
@@ -82,19 +133,21 @@ final class FullscreenWatcher {
                 return false   // thanh menu đang hiện trên màn hình này → không phải toàn màn hình
             }
         }
+        var owner: Int?
         for w in list {
             guard (w[kCGWindowLayer as String] as? Int) == 0,
-                  (w[kCGWindowOwnerPID as String] as? Int).map({ pid_t($0) }) != me,
+                  let pid = w[kCGWindowOwnerPID as String] as? Int, pid_t(pid) != me,
                   (w[kCGWindowAlpha as String] as? Double ?? 1) > 0.01,
                   let dict = w[kCGWindowBounds as String] as? NSDictionary,
                   let r = CGRect(dictionaryRepresentation: dict as CFDictionary),
-                  r.width > 100, r.height > 100,
-                  r.intersection(target).width > target.width / 2 else { continue }
-            // Cửa sổ đầu tiên (đứng trước nhất) trên màn hình này: phủ kín bề ngang, chạm đáy, mép trên ở sát mép màn hình
-            // (hoặc ngay dưới dải tai thỏ) = toàn màn hình.
-            return abs(r.minX - target.minX) < 2 && abs(r.width - target.width) < 2
+                  r.width > 100, r.intersection(target).width > target.width / 2 else { continue }
+            // App của cửa sổ đứng trước nhất trên màn hình này; chỉ xét cửa sổ của app đó.
+            if owner == nil { owner = pid }
+            guard pid == owner else { continue }
+            // Phủ kín bề ngang, chạm đáy, mép trên ở sát mép màn hình (hoặc ngay dưới dải tai thỏ) = toàn màn hình.
+            if abs(r.minX - target.minX) < 2 && abs(r.width - target.width) < 2
                 && abs(r.maxY - target.maxY) < 2
-                && r.minY >= target.minY - 1 && r.minY <= target.minY + notchInset + 2
+                && r.minY >= target.minY - 1 && r.minY <= target.minY + notchInset + 2 { return true }
         }
         return false
     }

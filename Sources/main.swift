@@ -4113,8 +4113,8 @@ struct SettingsView: View {
                 section(L("Khi app toàn màn hình", "When an app is full screen")) {
                     Toggle(L("Tự ẩn tai thỏ", "Hide the notch"), isOn: $hideInFullscreen)
                         .onChange(of: hideInFullscreen) { AppDelegate.shared?.controller.layout() }
-                    Text(L("App toàn màn hình (Safari, video, Final Cut…) thì tai thỏ ẩn đi cho khỏi che nội dung. Rê chuột lên giữa mép trên rồi dừng một chút là mở (rê lướt lên để hiện thanh menu của app thì không bị mở nhầm), kéo file lên đó là mở Kệ file, phím tắt vẫn dùng được, thông báo thả xuống vẫn hiện.",
-                           "While an app is full screen (Safari, video, Final Cut…) the notch hides so it doesn't cover content. Rest the pointer at the middle of the top edge for a moment to open it (passing over to reveal the app's menu bar won't open it), drag a file there to open the Shelf; shortcuts and drop-down alerts still work."))
+                    Text(L("App toàn màn hình (Safari, video, Final Cut…) thì tai thỏ ẩn đi cho khỏi che nội dung. Rê chuột lên giữa mép trên rồi dừng một chút là mở (rê lướt lên để hiện thanh menu của app thì không bị mở nhầm), kéo file lên đó là mở Kệ file, phím tắt vẫn dùng được, thông báo thả xuống vẫn hiện. Đã cấp quyền Trợ năng thì RinNotch nhận ra app toàn màn hình chính xác hơn.",
+                           "While an app is full screen (Safari, video, Final Cut…) the notch hides so it doesn't cover content. Rest the pointer at the middle of the top edge for a moment to open it (passing over to reveal the app's menu bar won't open it), drag a file there to open the Shelf; shortcuts and drop-down alerts still work. With Accessibility access RinNotch detects full screen apps more reliably."))
                         .noteText()
                 }
 
