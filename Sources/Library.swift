@@ -447,9 +447,11 @@ struct LibraryView: View {
                         .padding(4)
                         // Lưới phủ kín chiều cao để kéo khung ở chỗ trống bên dưới cũng được.
                         .frame(minHeight: geo.size.height, alignment: .top)
-                        .modifier(ClipMarquee(m: m, space: "bigClip", state: clipMarquee))
+                        .modifier(ClipMarquee(m: m, space: "bigClip", state: clipMarquee, root: false))
                     }
                 }
+                // Gốc kéo khung nằm ngoài vùng cuộn để nới ra lề cửa sổ + dải chữ dưới cùng (Phước yêu cầu 20/11).
+                .modifier(ClipMarquee(m: m, space: "bigClip", state: clipMarquee, outset: EdgeInsets(top: 8, leading: 20, bottom: 64, trailing: 20)))
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -472,9 +474,10 @@ struct LibraryView: View {
                         .padding(8)
                         // Lưới phủ kín chiều cao để kéo khung ở chỗ trống bên dưới cũng được.
                         .frame(minHeight: geo.size.height, alignment: .top)
-                        .modifier(ShelfMarquee(m: m, space: "bigShelf", state: bigMarquee))
+                        .modifier(ShelfMarquee(m: m, space: "bigShelf", state: bigMarquee, root: false))
                     }
                 }
+                .modifier(ShelfMarquee(m: m, space: "bigShelf", state: bigMarquee, outset: EdgeInsets(top: 8, leading: 20, bottom: 64, trailing: 20)))
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -494,6 +497,7 @@ struct LibraryView: View {
             if m.libraryTab == .clipboard {
                 Text(L("Bấm thẻ để chép · chuột phải: ghim, sửa chữ, mã màu, dịch · ghim giữ lại khi tắt app", "Click a card to copy · right-click: pin, edit text, color codes, translate · pins stay after quitting"))
                     .font(.system(size: 11)).foregroundStyle(.white.opacity(0.5)).lineLimit(1)
+                    .allowsHitTesting(false)   // để kéo khung bắt đầu được từ dải chữ này
                 Spacer()
                 if !m.clips.isEmpty {
                     Button(L("Xoá lịch sử", "Clear history")) { ClipboardWatcher.shared?.clearHistory() }.buttonStyle(PillButton())
@@ -507,6 +511,7 @@ struct LibraryView: View {
                     .font(.system(size: 11))
                     .foregroundStyle(m.shelfStatus != nil ? Color.green.opacity(0.9) : .white.opacity(0.5))
                     .lineLimit(1)
+                    .allowsHitTesting(false)
                 Spacer()
                 if !targets.isEmpty {
                     Button("AirDrop") { Actions.airDrop(targets) }.buttonStyle(PillButton(prominent: true))
