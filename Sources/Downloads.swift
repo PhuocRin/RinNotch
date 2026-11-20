@@ -140,7 +140,7 @@ final class DownloadWatcher {
         let url = e.url
         Diag.log("Tải về \(done ? "xong" : "dừng"): \(e.name) · \(url?.lastPathComponent ?? "không có đường dẫn")")
         if done, !e.isCopy {
-            let title = e.operation == .receiving ? "Đã nhận qua AirDrop" : "Đã tải xong"
+            let title = e.operation == .receiving ? L("Đã nhận qua AirDrop", "Received via AirDrop") : L("Đã tải xong", "Download finished")
             if Prefs.downloadsToShelf {
                 // Chỉ báo "đã nằm trên Kệ" khi thật sự thêm được.
                 addFinished(url, startedAt: e.started, name: e.name, title: title)
@@ -288,7 +288,7 @@ final class DownloadWatcher {
             m.addToShelf([f])
             m.trimShelfAfterDownload()
             Diag.log("Tải về: đã thêm \(f.lastPathComponent) vào Kệ")
-            announce(title, "\(f.lastPathComponent) · đã nằm trên Kệ file")
+            announce(title, L("\(f.lastPathComponent) · đã nằm trên Kệ file", "\(f.lastPathComponent) · now on the Shelf"))
             return
         }
         guard attempt < 4 else {
@@ -296,7 +296,7 @@ final class DownloadWatcher {
             let dir = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
             let readable = dir.map { (try? FileManager.default.contentsOfDirectory(atPath: $0.path)) != nil } ?? false
             Diag.log("Tải về: không tìm được file để thêm vào Kệ (đọc thư mục Tải về: \(readable ? "được" : "không được"))")
-            announce(title, readable ? name : "\(name) · cho RinNotch quyền thư mục Tải về để tự thêm vào Kệ")
+            announce(title, readable ? name : L("\(name) · cho RinNotch quyền thư mục Tải về để tự thêm vào Kệ", "\(name) · give RinNotch access to Downloads to add it to the Shelf automatically"))
             return
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + [0.4, 1.0, 2.0, 4.0][attempt]) {
@@ -336,10 +336,10 @@ final class DownloadWatcher {
     }
 
     static func remainingText(_ s: Double) -> String {
-        if s < 60 { return "còn \(Int(s)) giây" }
-        if s < 3600 { return "còn \(Int((s / 60).rounded(.up))) phút" }
+        if s < 60 { return L("còn \(Int(s)) giây", "\(Int(s)) s left") }
+        if s < 3600 { return L("còn \(Int((s / 60).rounded(.up))) phút", "\(Int((s / 60).rounded(.up))) min left") }
         let h = Int(s / 3600), mm = Int((s.truncatingRemainder(dividingBy: 3600) / 60).rounded())
-        return mm > 0 ? "còn \(h) giờ \(mm) phút" : "còn \(h) giờ"
+        return mm > 0 ? L("còn \(h) giờ \(mm) phút", "\(h) h \(mm) min left") : L("còn \(h) giờ", "\(h) h left")
     }
 
     /// Tên file bỏ đuôi tạm của trình duyệt (.download của Safari, .crdownload của Chrome, .part).
@@ -420,18 +420,18 @@ struct DownloadCard: View {
     private var detail: String {
         var parts: [String] = []
         if let f = item.fraction { parts.append("\(Int(f * 100))%") }
-        if item.paused { parts.append("Tạm dừng") }
+        if item.paused { parts.append(L("Tạm dừng", "Pause")) }
         else {
             if item.bytesPerSecond > 0 { parts.append(DownloadWatcher.speedText(item.bytesPerSecond)) }
             if let r = item.remaining { parts.append(DownloadWatcher.remainingText(r)) }
         }
-        return parts.isEmpty ? (item.copying ? "Đang chép" : "Đang tải") : parts.joined(separator: " · ")
+        return parts.isEmpty ? (item.copying ? L("Đang chép", "Copying") : L("Đang tải", "Downloading")) : parts.joined(separator: " · ")
     }
 
     private var title: String {
         if item.receiving { return "AirDrop" }
-        if item.copying { return "Đang chép" }
-        return item.source.map { "Tải bằng \($0.name)" } ?? "Đang tải"
+        if item.copying { return L("Đang chép", "Copying") }
+        return item.source.map { L("Tải bằng \($0.name)", "Downloading with \($0.name)") } ?? L("Đang tải", "Downloading")
     }
 
     var body: some View {
@@ -466,12 +466,12 @@ struct DownloadCard: View {
                 if hovered {
                     HStack(spacing: 4) {
                         if item.pausable {
-                            cardButton(item.paused ? "play.fill" : "pause.fill", help: item.paused ? "Tiếp tục" : "Tạm dừng") {
+                            cardButton(item.paused ? "play.fill" : "pause.fill", help: item.paused ? L("Tiếp tục", "Resume") : L("Tạm dừng", "Pause")) {
                                 DownloadWatcher.shared.togglePause(item.id)
                             }
                         }
                         if item.cancellable {
-                            cardButton("xmark", help: "Huỷ tải") { DownloadWatcher.shared.cancel(item.id) }
+                            cardButton("xmark", help: L("Huỷ tải", "Cancel download")) { DownloadWatcher.shared.cancel(item.id) }
                         }
                     }
                     .padding(6)
@@ -482,16 +482,16 @@ struct DownloadCard: View {
             .contentShape(RoundedRectangle(cornerRadius: 13))
         }
         .buttonStyle(.plain)
-        .help(item.source.map { "Bấm để mở \($0.name)" } ?? item.name)
+        .help(item.source.map { L("Bấm để mở \($0.name)", "Click to open \($0.name)") } ?? item.name)
         .contextMenu {
-            if let s = item.source { Button("Mở \(s.name)") { DownloadWatcher.shared.openSource(item.id) } }
-            Button("Hiện trong Finder") { DownloadWatcher.shared.reveal(item.id) }
+            if let s = item.source { Button(L("Mở \(s.name)", "Open \(s.name)")) { DownloadWatcher.shared.openSource(item.id) } }
+            Button(L("Hiện trong Finder", "Show in Finder")) { DownloadWatcher.shared.reveal(item.id) }
             if item.pausable {
-                Button(item.paused ? "Tiếp tục tải" : "Tạm dừng") { DownloadWatcher.shared.togglePause(item.id) }
+                Button(item.paused ? L("Tiếp tục tải", "Resume download") : L("Tạm dừng", "Pause")) { DownloadWatcher.shared.togglePause(item.id) }
             }
             if item.cancellable {
                 Divider()
-                Button("Huỷ tải") { DownloadWatcher.shared.cancel(item.id) }
+                Button(L("Huỷ tải", "Cancel download")) { DownloadWatcher.shared.cancel(item.id) }
             }
         }
         .onHover { inside in withAnimation(HoverAnim.bounce) { hovered = inside } }

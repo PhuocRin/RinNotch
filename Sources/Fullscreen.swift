@@ -47,22 +47,51 @@ final class FullscreenWatcher {
 
     func check() {
         guard let g = geometry(), Prefs.hideInFullscreen, g.screenFrame.width > 0 else {
+            generation += 1
             set(false, why: nil)
             return
         }
-        let inset = NSScreen.screens.first(where: { $0.frame == g.screenFrame })?.safeAreaInsets.top ?? 0
+        generation += 1
+        let gen = generation
+        let frame = g.screenFrame
+        let inset = NSScreen.screens.first(where: { $0.frame == frame })?.safeAreaInsets.top ?? 0
         let app = NSWorkspace.shared.frontmostApplication
         let name = app?.localizedName ?? "?"
+        let trusted = AXIsProcessTrusted()
         // 1. Có quyền Trợ năng: hỏi thẳng cửa sổ đang dùng có đang toàn màn hình không (chính xác, không phải đoán).
-        if let pid = app?.processIdentifier, pid != ProcessInfo.processInfo.processIdentifier,
-           Self.axFullscreen(pid: pid, on: g.screenFrame) == true {
+        //    Hỏi trên luồng phụ: app kia chậm trả lời (tới 0,25 giây mỗi câu) thì luồng chính vẫn rảnh,
+        //    tai thỏ và các bộ nghe phím (Copy liên tục) không phải chờ.
+        if trusted, let pid = app?.processIdentifier, pid != ProcessInfo.processInfo.processIdentifier,
+           let main = NSScreen.screens.first {
+            // Toạ độ Trợ năng: gốc trên trái màn hình chính. NSScreen chỉ đọc ở luồng chính nên tính sẵn ở đây.
+            let target = CGRect(x: frame.minX, y: main.frame.maxY - frame.maxY, width: frame.width, height: frame.height)
+            axQueue.async { [weak self] in
+                let ax = Self.axFullscreen(pid: pid, target: target) == true
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        self?.finish(gen: gen, ax: ax, frame: frame, inset: inset, name: name, trusted: true)
+                    }
+                }
+            }
+            return
+        }
+        finish(gen: gen, ax: false, frame: frame, inset: inset, name: name, trusted: trusted)
+    }
+
+    /// Mỗi lượt kiểm có số thứ tự: lượt cũ (hỏi Trợ năng về trễ) thì bỏ, không được đè kết quả của lượt mới hơn.
+    private var generation = 0
+    private let axQueue = DispatchQueue(label: "com.phuocrin.rinnotch.fullscreen", qos: .userInitiated)
+
+    private func finish(gen: Int, ax: Bool, frame: CGRect, inset: CGFloat, name: String, trusted: Bool) {
+        guard gen == generation else { return }
+        if ax {
             set(true, why: "\(name), Trợ năng")
             return
         }
         // 2. Không có quyền, hoặc app tự phủ kín màn hình mà không dùng chế độ toàn màn hình của macOS
-        //    (trình chiếu, game): đoán theo khung cửa sổ.
-        set(Self.isFullscreen(on: g.screenFrame, notchInset: inset),
-            why: "\(name), \(AXIsProcessTrusted() ? "Trợ năng + " : "")khung cửa sổ")
+        //    (trình chiếu, game): đoán theo khung cửa sổ (nhanh, đọc ở luồng chính).
+        set(Self.isFullscreen(on: frame, notchInset: inset),
+            why: "\(name), \(trusted ? "Trợ năng + " : "")khung cửa sổ")
     }
 
     private var lastWhy = ""
@@ -80,7 +109,8 @@ final class FullscreenWatcher {
 
     /// Hỏi Trợ năng: cửa sổ đang dùng (hoặc cửa sổ chính) của app có thuộc tính AXFullScreen = true và nằm trên màn hình này.
     /// nil = không hỏi được (chưa có quyền, app không trả lời) → dùng cách đoán theo khung cửa sổ.
-    static func axFullscreen(pid: pid_t, on frame: CGRect) -> Bool? {
+    /// Chạy trên luồng phụ (không đụng AppKit). `target`: khung màn hình theo toạ độ gốc trên trái màn hình chính.
+    nonisolated static func axFullscreen(pid: pid_t, target: CGRect) -> Bool? {
         guard AXIsProcessTrusted() else { return nil }
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(app, 0.25)   // app treo thì không kéo RinNotch treo theo
@@ -102,8 +132,6 @@ final class FullscreenWatcher {
            let pv = posV, let sv = sizeV {
             AXValueGetValue(pv as! AXValue, .cgPoint, &pos)
             AXValueGetValue(sv as! AXValue, .cgSize, &size)
-            guard let main = NSScreen.screens.first else { return true }
-            let target = CGRect(x: frame.minX, y: main.frame.maxY - frame.maxY, width: frame.width, height: frame.height)
             let r = CGRect(origin: pos, size: size)
             if r.width > 0, r.intersection(target).width < target.width / 2 { return false }
         }

@@ -195,7 +195,7 @@ struct ClipItem: Identifiable {
             return urls.count == 1 ? urls[0].lastPathComponent : "\(urls.count) file: \(urls[0].lastPathComponent)…"
         case .image(let img):
             let w = img.pixelWidth, h = img.pixelHeight
-            return w > 0 ? "Hình ảnh \(w) × \(h)" : "Hình ảnh"
+            return w > 0 ? L("Hình ảnh \(w) × \(h)", "Image \(w) × \(h)") : L("Hình ảnh", "Image")
         }
     }
 
@@ -397,16 +397,16 @@ enum TextTransform: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .upper: return "VIẾT HOA HẾT"
-        case .lower: return "viết thường hết"
-        case .capitalize: return "Viết Hoa Đầu Mỗi Từ"
-        case .sentence: return "Viết hoa đầu câu"
-        case .noDiacritics: return "Bỏ dấu tiếng Việt"
-        case .squeeze: return "Bỏ khoảng trắng thừa"
-        case .removeBlank: return "Bỏ dòng trống"
-        case .joinLines: return "Nối thành một dòng"
-        case .sortLines: return "Sắp xếp dòng A → Z"
-        case .dedupeLines: return "Xoá dòng trùng"
+        case .upper: return L("VIẾT HOA HẾT", "UPPERCASE")
+        case .lower: return L("viết thường hết", "lowercase")
+        case .capitalize: return L("Viết Hoa Đầu Mỗi Từ", "Title Case")
+        case .sentence: return L("Viết hoa đầu câu", "Sentence case")
+        case .noDiacritics: return L("Bỏ dấu tiếng Việt", "Remove diacritics")
+        case .squeeze: return L("Bỏ khoảng trắng thừa", "Trim extra spaces")
+        case .removeBlank: return L("Bỏ dòng trống", "Remove empty lines")
+        case .joinLines: return L("Nối thành một dòng", "Join into one line")
+        case .sortLines: return L("Sắp xếp dòng A → Z", "Sort lines A → Z")
+        case .dedupeLines: return L("Xoá dòng trùng", "Remove duplicate lines")
         }
     }
 
@@ -820,12 +820,12 @@ enum AppIcons {
 extension ClipCategory {
     var title: String {
         switch self {
-        case .text: return "Chữ"
+        case .text: return L("Chữ", "Text")
         case .link: return "Link"
-        case .color: return "Màu"
+        case .color: return L("Màu", "Color")
         case .code: return "Code"
         case .file: return "File"
-        case .image: return "Ảnh"
+        case .image: return L("Ảnh", "Image")
         }
     }
 }
@@ -847,7 +847,7 @@ struct ClipboardView: View {
                 } else {
                 HStack(spacing: 5) {
                     Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
-                    TextField("", text: $m.clipSearch, prompt: Text("Tìm, @link @code @tên-app").foregroundColor(.white.opacity(0.35)))
+                    TextField("", text: $m.clipSearch, prompt: Text(L("Tìm, @link @code @tên-app", "Search, @link @code @app-name")).foregroundColor(.white.opacity(0.35)))
                         .textFieldStyle(.plain)
                         .font(.system(size: 12))
                     if !m.clipSearch.isEmpty {
@@ -882,7 +882,7 @@ struct ClipboardView: View {
                             .contentShape(Circle())
                     }
                     .buttonStyle(HoverPlain())
-                    .help("Xoá lịch sử (mục đã ghim vẫn giữ)")
+                    .help(L("Xoá lịch sử (mục đã ghim vẫn giữ)", "Clear history (pinned items are kept)"))
                 }
                 }
                 Button {
@@ -895,7 +895,7 @@ struct ClipboardView: View {
                         .contentShape(Circle())
                 }
                 .buttonStyle(HoverPlain())
-                .help("Mở bảng lớn (\(HotkeyCenter.combo(.library)?.display ?? "⌃⇧0"))")
+                .help(L("Mở bảng lớn (\(HotkeyCenter.combo(.library)?.display ?? "⌃⇧0"))", "Open Big Board (\(HotkeyCenter.combo(.library)?.display ?? "⌃⇧0"))"))
             }
             if m.clipFilter == .vault && !m.privateUnlocked {
                 VaultLockedView(m: m)
@@ -930,7 +930,7 @@ struct ClipboardView: View {
                 }
                 }
                 .frame(height: ClipCard.height + 16)
-                .help("Bấm thẻ để chép · kéo khung ở chỗ trống hoặc ⌘ bấm để chọn nhiều · chuột phải: ghim, đặt tên, sửa chữ, dịch")
+                .help(L("Bấm thẻ để chép · kéo khung ở chỗ trống hoặc ⌘ bấm để chọn nhiều · chuột phải: ghim, đặt tên, sửa chữ, dịch", "Click a card to copy · drag a box on empty space or ⌘-click to select several · right-click: pin, name, edit text, translate"))
             }
         }
         // Kéo khung từ chỗ trống phía trên (khe giữa hàng nút và hàng thẻ) cũng chọn được.
@@ -940,16 +940,16 @@ struct ClipboardView: View {
     }
 
     private var emptyTitle: String {
-        if !m.clipSearch.isEmpty || m.clipCategory != nil || m.clipApp != nil { return "Không có mục nào khớp" }
-        if m.clipFilter == .vault { return "Riêng tư đang trống" }
-        return m.clipFilter == .pinned ? "Chưa ghim mục nào" : "Copy gì đó, nó sẽ hiện ở đây"
+        if !m.clipSearch.isEmpty || m.clipCategory != nil || m.clipApp != nil { return L("Không có mục nào khớp", "No matching items") }
+        if m.clipFilter == .vault { return L("Riêng tư đang trống", "Private is empty") }
+        return m.clipFilter == .pinned ? L("Chưa ghim mục nào", "No pinned items yet") : L("Copy gì đó, nó sẽ hiện ở đây", "Copy something and it will show up here")
     }
 
     private var emptyDetail: String {
-        if !m.clipSearch.isEmpty { return "Thử bỏ dấu hoặc bớt từ khoá" }
-        if m.clipFilter == .vault { return "Kéo thẻ thả vào nút Riêng tư, hoặc chuột phải thẻ → Chuyển vào Riêng tư" }
-        return m.clipFilter == .pinned ? "Bấm ghim trên thẻ, hoặc chuột phải → Ghim. Mục đã ghim vẫn còn khi tắt app."
-                                       : "Mật khẩu copy từ trình quản lý mật khẩu sẽ không được lưu"
+        if !m.clipSearch.isEmpty { return L("Thử bỏ dấu hoặc bớt từ khoá", "Try fewer or different keywords") }
+        if m.clipFilter == .vault { return L("Kéo thẻ thả vào nút Riêng tư, hoặc chuột phải thẻ → Chuyển vào Riêng tư", "Drag a card onto the Private button, or right-click a card → Move to Private") }
+        return m.clipFilter == .pinned ? L("Bấm ghim trên thẻ, hoặc chuột phải → Ghim. Mục đã ghim vẫn còn khi tắt app.", "Click the pin on a card, or right-click → Pin. Pinned items stay after you quit the app.")
+                                       : L("Mật khẩu copy từ trình quản lý mật khẩu sẽ không được lưu", "Passwords copied from password managers are never saved")
     }
 
 }
@@ -960,7 +960,7 @@ struct ClipChips: View {
     var large = false
 
     var body: some View {
-        chip("Tất cả", count: m.clips.count, on: m.clipFilter == .recent && m.clipCategory == nil && m.clipApp == nil, symbol: "square.grid.2x2") {
+        chip(L("Tất cả", "All"), count: m.clips.count, on: m.clipFilter == .recent && m.clipCategory == nil && m.clipApp == nil, symbol: "square.grid.2x2") {
             m.clipFilter = .recent; m.clipCategory = nil; m.clipApp = nil
         }
         chip("Ghim", count: m.pins.count, on: m.clipFilter == .pinned, symbol: "pin.fill") {
@@ -1003,7 +1003,7 @@ struct ClipChips: View {
                     .contentShape(Capsule())
                 }
                 .buttonStyle(HoverPlain())
-                .help("Chỉ hiện thứ chép từ \(a.name)")
+                .help(L("Chỉ hiện thứ chép từ \(a.name)", "Only show items copied from \(a.name)"))
             }
         }
     }
@@ -1115,7 +1115,7 @@ struct ClipCard: View, Equatable {
                 if flash {
                     ZStack {
                         Color.black.opacity(0.55)
-                        Label("Đã chép", systemImage: "checkmark.circle.fill")
+                        Label(L("Đã chép", "Copied"), systemImage: "checkmark.circle.fill")
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(Color.green)
                     }
@@ -1156,9 +1156,9 @@ struct ClipCard: View, Equatable {
             else if isPrivate { privateMenu } else { menu(pinned: pinned) }
         }
         .modifier(ClipDragModifier(item: item, enabled: !isPrivate && !picking))
-        .help(picking ? "Bấm để chọn / bỏ chọn thẻ này"
-              : isPrivate ? "Mục riêng tư · bấm để chép (không ghi vào lịch sử) · ⌘ bấm để chọn nhiều"
-                          : (item.sourceName.map { "Chép từ \($0) · ⌘ bấm hoặc kéo khung ở chỗ trống để chọn nhiều" } ?? "Bấm để chép lại"))
+        .help(picking ? L("Bấm để chọn / bỏ chọn thẻ này", "Click to select / deselect this card")
+              : isPrivate ? L("Mục riêng tư · bấm để chép (không ghi vào lịch sử) · ⌘ bấm để chọn nhiều", "Private item · click to copy (not saved to history) · ⌘-click to select several")
+                          : (item.sourceName.map { L("Chép từ \($0) · ⌘ bấm hoặc kéo khung ở chỗ trống để chọn nhiều", "Copied from \($0) · ⌘-click or drag a box on empty space to select several") } ?? L("Bấm để chép lại", "Click to copy again")))
     }
 
     @ViewBuilder private var content: some View {
@@ -1241,7 +1241,7 @@ struct ClipCard: View, Equatable {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(HoverPlain())
-                .help(pinned ? "Bỏ ghim" : "Ghim (giữ lại lâu dài)")
+                .help(pinned ? L("Bỏ ghim", "Unpin") : L("Ghim (giữ lại lâu dài)", "Pin (keep long-term)"))
             }
         }
         .foregroundStyle(.white.opacity(0.75))
@@ -1269,52 +1269,52 @@ struct ClipCard: View, Equatable {
     }
 
     @ViewBuilder private var privateMenu: some View {
-        Button("🔒 Khoá Riêng tư ngay") { PrivateVault.shared.lock() }
+        Button(L("🔒 Khoá Riêng tư ngay", "🔒 Lock Private now")) { PrivateVault.shared.lock() }
         Divider()
-        Button("Sao chép") { PrivateVault.shared.copy(item) }
-        Button("Bỏ khỏi Riêng tư (về Bộ nhớ tạm)") { PrivateVault.shared.moveOut(item) }
+        Button(L("Sao chép", "Copy")) { PrivateVault.shared.copy(item) }
+        Button(L("Bỏ khỏi Riêng tư (về Bộ nhớ tạm)", "Remove from Private (back to Clipboard)")) { PrivateVault.shared.moveOut(item) }
         Divider()
-        Button("Xoá hẳn mục này") { PrivateVault.shared.delete(item) }
+        Button(L("Xoá hẳn mục này", "Permanently delete this item")) { PrivateVault.shared.delete(item) }
     }
 
     @ViewBuilder private func menu(pinned: Bool) -> some View {
-        Button("Sao chép") { ClipboardWatcher.shared?.restore(item) }
-        Button(pinned ? "Bỏ ghim" : "Ghim") { ClipboardWatcher.shared?.togglePin(item) }
-        Button("Chuyển vào Riêng tư 🔒") { PrivateVault.shared.add(item) }
-        Button(item.name == nil ? "Đặt tên…" : "Đổi tên…") {
-            if let n = Prompt.text(title: item.name == nil ? "Đặt tên cho mục này" : "Đổi tên",
-                                   message: "Tên hiện dưới thẻ và tìm được bằng ô tìm.",
-                                   value: item.name ?? "", ok: "Lưu") {
+        Button(L("Sao chép", "Copy")) { ClipboardWatcher.shared?.restore(item) }
+        Button(pinned ? L("Bỏ ghim", "Unpin") : "Ghim") { ClipboardWatcher.shared?.togglePin(item) }
+        Button(L("Chuyển vào Riêng tư 🔒", "Move to Private 🔒")) { PrivateVault.shared.add(item) }
+        Button(item.name == nil ? L("Đặt tên…", "Name…") : L("Đổi tên…", "Rename…")) {
+            if let n = Prompt.text(title: item.name == nil ? L("Đặt tên cho mục này", "Name this item") : L("Đổi tên", "Rename"),
+                                   message: L("Tên hiện dưới thẻ và tìm được bằng ô tìm.", "The name shows under the card and can be searched."),
+                                   value: item.name ?? "", ok: L("Lưu", "Save")) {
                 ClipboardWatcher.shared?.setName(item, n)
             }
         }
         if item.name != nil {
-            Button("Bỏ tên") { ClipboardWatcher.shared?.setName(item, nil) }
+            Button(L("Bỏ tên", "Remove name")) { ClipboardWatcher.shared?.setName(item, nil) }
         }
         if item.category == .link, let t = item.text, let u = ClipParse.link(t) {
-            Button("Mở liên kết") { NSWorkspace.shared.open(u) }
+            Button(L("Mở liên kết", "Open link")) { NSWorkspace.shared.open(u) }
         }
         if item.category == .color, let t = item.text, let c = ClipParse.color(t) {
-            Menu("Chép mã màu dạng") {
+            Menu(L("Chép mã màu dạng", "Copy color as")) {
                 Button(ClipParse.hex(c)) { ClipboardWatcher.shared?.copyText(ClipParse.hex(c)) }
                 Button(ClipParse.rgb(c)) { ClipboardWatcher.shared?.copyText(ClipParse.rgb(c)) }
                 Button(ClipParse.hsl(c)) { ClipboardWatcher.shared?.copyText(ClipParse.hsl(c)) }
             }
         }
         if let t = item.text {
-            Menu("Sửa nhanh chữ rồi chép") {
+            Menu(L("Sửa nhanh chữ rồi chép", "Quick text fix, then copy")) {
                 ForEach(TextTransform.allCases) { tr in
                     Button(tr.title) { ClipboardWatcher.shared?.copyText(tr.apply(t)) }
                 }
             }
-            Button("Dịch đoạn này") { TranslateModel.shared.start(text: t) }
+            Button(L("Dịch đoạn này", "Translate this")) { TranslateModel.shared.start(text: t) }
         }
         if case .files(let urls) = item.kind {
-            Button("Hiện trong Finder") { NSWorkspace.shared.activateFileViewerSelecting(urls) }
-            Button("Thả lên Kệ file") { m.addToShelf(urls) }
+            Button(L("Hiện trong Finder", "Show in Finder")) { NSWorkspace.shared.activateFileViewerSelecting(urls) }
+            Button(L("Thả lên Kệ file", "Add to Shelf")) { m.addToShelf(urls) }
         }
         Divider()
-        Button("Xoá mục này") { ClipboardWatcher.shared?.remove(item) }
+        Button(L("Xoá mục này", "Delete this item")) { ClipboardWatcher.shared?.remove(item) }
     }
 }
 
@@ -1331,7 +1331,7 @@ struct StackToggleButton: View {
                 Image(systemName: on ? "square.stack.3d.up.fill" : "square.stack.3d.up")
                     .font(.system(size: 11, weight: .bold))
                 if hovered || on {
-                    Text(on ? "Đang copy liên tục" : "Copy liên tục")
+                    Text(on ? L("Đang copy liên tục", "Paste Stack is on") : L("Copy liên tục", "Paste Stack"))
                         .font(.system(size: 10.5, weight: .semibold))
                         .lineLimit(1)
                         .fixedSize()
@@ -1348,7 +1348,7 @@ struct StackToggleButton: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .help(on ? "Tắt Copy liên tục (hoặc nhấn ⌃ hai lần)" : "Copy nhiều thứ rồi ⌘V dán lần lượt (hoặc nhấn ⌃ hai lần)")
+        .help(on ? L("Tắt Copy liên tục (hoặc nhấn ⌃ hai lần)", "Turn off Paste Stack (or press ⌃ twice)") : L("Copy nhiều thứ rồi ⌘V dán lần lượt (hoặc nhấn ⌃ hai lần)", "Copy several things, then ⌘V pastes them one by one (or press ⌃ twice)"))
         .onHover { inside in withAnimation(HoverAnim.bounce) { hovered = inside } }
     }
 }
@@ -1379,7 +1379,7 @@ struct VaultChip: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: m.privateUnlocked ? "lock.open.fill" : "lock.fill").font(.system(size: 9.5, weight: .semibold))
-                Text("Riêng tư").font(.system(size: 11, weight: .semibold))
+                Text(L("Riêng tư", "Private")).font(.system(size: 11, weight: .semibold))
                 Text("\(m.privateCount)").font(.system(size: 10, weight: .semibold)).monospacedDigit()
                     .foregroundStyle(.white.opacity(on ? 0.75 : 0.45))
             }
@@ -1393,12 +1393,12 @@ struct VaultChip: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .help("Bộ nhớ tạm riêng tư, khoá bằng vân tay · kéo thẻ thả vào đây để cất · chuột phải để khoá ngay")
+        .help(L("Bộ nhớ tạm riêng tư, khoá bằng vân tay · kéo thẻ thả vào đây để cất · chuột phải để khoá ngay", "Private clipboard, locked with Touch ID · drop a card here to store it · right-click to lock now"))
         .contextMenu {
             if m.privateUnlocked {
-                Button("🔒 Khoá Riêng tư ngay") { PrivateVault.shared.lock() }
+                Button(L("🔒 Khoá Riêng tư ngay", "🔒 Lock Private now")) { PrivateVault.shared.lock() }
             } else {
-                Button("Mở khoá bằng vân tay") {
+                Button(L("Mở khoá bằng vân tay", "Unlock with Touch ID")) {
                     m.clipFilter = .vault; m.clipCategory = nil; m.clipApp = nil
                     PrivateVault.shared.unlock()
                 }

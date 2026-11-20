@@ -140,7 +140,7 @@ enum ClipSelect {
             if vault {
                 PrivateVault.shared.copyRaw(ClipItem(kind: .text(joined)))
             } else {
-                ClipboardWatcher.shared?.copyText(joined, source: "RinNotch · gộp \(used) mục")
+                ClipboardWatcher.shared?.copyText(joined, source: L("RinNotch · gộp \(used) mục", "RinNotch · merged \(used) items"))
             }
         } else if let img = its.first(where: { if case .image = $0.kind { return true } else { return false } }) {
             // Toàn ảnh: chỉ chép được một ảnh mỗi lần, lấy ảnh mới nhất (muốn dán hết thì dùng Copy liên tục).
@@ -206,14 +206,14 @@ struct ClipSelectionBar: View {
         let n = ClipSelect.items(m).count
         let vault = m.clipFilter == .vault
         HStack(spacing: large ? 8 : 5) {
-            Text(copied > 0 ? "Đã chép gộp \(copied) mục" : "Đã chọn \(n)")
+            Text(copied > 0 ? L("Đã chép gộp \(copied) mục", "Copied \(copied) items as one") : L("Đã chọn \(n)", "\(n) selected"))
                 .font(.system(size: large ? 13 : 11.5, weight: .semibold))
                 .monospacedDigit()
                 .foregroundStyle(copied > 0 ? Color.green : Color.white)
                 .lineLimit(1)
                 .fixedSize()
                 .padding(.horizontal, 4)
-            act("doc.on.doc", "Chép gộp", help: "Chép tất cả thành một lần dán (chữ nối mỗi mục một dòng, file chép cả nhóm)") {
+            act("doc.on.doc", L("Chép gộp", "Copy merged"), help: L("Chép tất cả thành một lần dán (chữ nối mỗi mục một dòng, file chép cả nhóm)", "Copy everything as one paste (text joined one item per line, files copied together)")) {
                 let c = ClipSelect.copyJoined(m)
                 guard c > 0 else { return }
                 copied = c
@@ -225,21 +225,21 @@ struct ClipSelectionBar: View {
                 }
             }
             if !vault {
-                act("square.stack.3d.up.fill", "Copy liên tục", tint: .orange,
-                    help: "⌘V dán lần lượt từng mục đã chọn, theo thứ tự đã copy (cũ trước)") { ClipSelect.pasteInOrder(m) }
+                act("square.stack.3d.up.fill", L("Copy liên tục", "Paste Stack"), tint: .orange,
+                    help: L("⌘V dán lần lượt từng mục đã chọn, theo thứ tự đã copy (cũ trước)", "⌘V pastes the selected items one by one, in the order they were copied (oldest first)")) { ClipSelect.pasteInOrder(m) }
                 let pinned = ClipSelect.allPinned(m)
-                act(pinned ? "pin.slash" : "pin.fill", pinned ? "Bỏ ghim" : "Ghim",
-                    help: pinned ? "Bỏ ghim cả nhóm" : "Ghim cả nhóm") { ClipSelect.togglePin(m) }
-                act("lock.fill", "Riêng tư", help: "Cất cả nhóm vào Riêng tư (khoá bằng vân tay)") { ClipSelect.toPrivate(m) }
+                act(pinned ? "pin.slash" : "pin.fill", pinned ? L("Bỏ ghim", "Unpin") : "Ghim",
+                    help: pinned ? L("Bỏ ghim cả nhóm", "Unpin all") : L("Ghim cả nhóm", "Pin all")) { ClipSelect.togglePin(m) }
+                act("lock.fill", L("Riêng tư", "Private"), help: L("Cất cả nhóm vào Riêng tư (khoá bằng vân tay)", "Move all to Private (locked with Touch ID)")) { ClipSelect.toPrivate(m) }
             } else {
-                act("lock.open", "Bỏ khỏi Riêng tư", help: "Đưa cả nhóm về Bộ nhớ tạm thường") { ClipSelect.moveOut(m) }
+                act("lock.open", L("Bỏ khỏi Riêng tư", "Remove from Private"), help: L("Đưa cả nhóm về Bộ nhớ tạm thường", "Move all back to the regular clipboard")) { ClipSelect.moveOut(m) }
             }
-            act("trash", "Xoá", tint: .red, help: vault ? "Xoá hẳn cả nhóm khỏi Riêng tư" : "Xoá cả nhóm khỏi lịch sử") {
+            act("trash", L("Xoá", "Delete"), tint: .red, help: vault ? L("Xoá hẳn cả nhóm khỏi Riêng tư", "Permanently delete all from Private") : L("Xoá cả nhóm khỏi lịch sử", "Delete all from history")) {
                 ClipSelect.delete(m)
             }
             Spacer(minLength: 4)
             if large && n < m.visibleClips.count {
-                act(nil, "Chọn hết", help: "⌘A") { ClipSelect.selectAll(m) }
+                act(nil, L("Chọn hết", "Select all"), help: "⌘A") { ClipSelect.selectAll(m) }
             }
             Button { ClipSelect.clear(m) } label: {
                 Image(systemName: "xmark")
@@ -249,7 +249,7 @@ struct ClipSelectionBar: View {
                     .contentShape(Circle())
             }
             .buttonStyle(HoverPlain())
-            .help("Bỏ chọn (Esc)")
+            .help(L("Bỏ chọn (Esc)", "Deselect (Esc)"))
         }
         .padding(.vertical, 2)
     }
@@ -280,18 +280,18 @@ struct ClipSelectionMenu: View {
     var body: some View {
         let n = ClipSelect.items(m).count
         let vault = m.clipFilter == .vault
-        Button("Chép gộp \(n) mục") {
+        Button(L("Chép gộp \(n) mục", "Copy \(n) items merged")) {
             if ClipSelect.copyJoined(m) > 0 { ClipSelect.clear(m) }
         }
         if !vault {
-            Button("Copy liên tục \(n) mục (⌘V dán lần lượt)") { ClipSelect.pasteInOrder(m) }
-            Button(ClipSelect.allPinned(m) ? "Bỏ ghim \(n) mục" : "Ghim \(n) mục") { ClipSelect.togglePin(m) }
-            Button("Chuyển \(n) mục vào Riêng tư 🔒") { ClipSelect.toPrivate(m) }
+            Button(L("Copy liên tục \(n) mục (⌘V dán lần lượt)", "Paste Stack with \(n) items (⌘V pastes one by one)")) { ClipSelect.pasteInOrder(m) }
+            Button(ClipSelect.allPinned(m) ? L("Bỏ ghim \(n) mục", "Unpin \(n) items") : L("Ghim \(n) mục", "Pin \(n) items")) { ClipSelect.togglePin(m) }
+            Button(L("Chuyển \(n) mục vào Riêng tư 🔒", "Move \(n) items to Private 🔒")) { ClipSelect.toPrivate(m) }
         } else {
-            Button("Bỏ \(n) mục khỏi Riêng tư") { ClipSelect.moveOut(m) }
+            Button(L("Bỏ \(n) mục khỏi Riêng tư", "Remove \(n) items from Private")) { ClipSelect.moveOut(m) }
         }
         Divider()
-        Button("Bỏ chọn") { ClipSelect.clear(m) }
-        Button(vault ? "Xoá hẳn \(n) mục" : "Xoá \(n) mục") { ClipSelect.delete(m) }
+        Button(L("Bỏ chọn", "Deselect")) { ClipSelect.clear(m) }
+        Button(vault ? L("Xoá hẳn \(n) mục", "Permanently delete \(n) items") : L("Xoá \(n) mục", "Delete \(n) items")) { ClipSelect.delete(m) }
     }
 }

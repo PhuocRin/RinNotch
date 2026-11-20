@@ -64,15 +64,15 @@ final class PasteStack {
         if active {
             m.stack?.append(contentsOf: items)
             if m.expanded { AppDelegate.shared?.controller.collapse() }
-            m.showTransient(.message(symbol: "square.stack.3d.up.fill", title: "Thêm \(items.count) mục vào Copy liên tục",
-                                     detail: "⌘V để dán lần lượt · nhấn ⌃ hai lần để tắt"), seconds: 2.5)
+            m.showTransient(.message(symbol: "square.stack.3d.up.fill", title: L("Thêm \(items.count) mục vào Copy liên tục", "Added \(items.count) items to Paste Stack"),
+                                     detail: L("⌘V để dán lần lượt · nhấn ⌃ hai lần để tắt", "⌘V to paste one by one · press ⌃ twice to turn off")), seconds: 2.5)
             return
         }
         start()
         guard active else { return }
         m.stack = items
-        m.showTransient(.message(symbol: "square.stack.3d.up.fill", title: "Sẵn sàng dán \(items.count) mục",
-                                 detail: "⌘V để dán lần lượt · nhấn ⌃ hai lần để tắt"), seconds: 2.5)
+        m.showTransient(.message(symbol: "square.stack.3d.up.fill", title: L("Sẵn sàng dán \(items.count) mục", "Ready to paste \(items.count) items"),
+                                 detail: L("⌘V để dán lần lượt · nhấn ⌃ hai lần để tắt", "⌘V to paste one by one · press ⌃ twice to turn off")), seconds: 2.5)
         Diag.log("Copy liên tục: nạp sẵn \(items.count) mục")
     }
 
@@ -82,16 +82,16 @@ final class PasteStack {
             Access.prompt()
             // Đang bung thì banner không hiện được: thu lại trước.
             if m.expanded { AppDelegate.shared?.controller.collapse() }
-            m.showTransient(.message(symbol: "hand.raised", title: "Copy liên tục cần quyền Trợ năng",
-                                     detail: "Cài đặt hệ thống → Quyền riêng tư & Bảo mật → Trợ năng → RinNotch"), seconds: 5)
+            m.showTransient(.message(symbol: "hand.raised", title: L("Copy liên tục cần quyền Trợ năng", "Paste Stack needs Accessibility access"),
+                                     detail: L("Cài đặt hệ thống → Quyền riêng tư & Bảo mật → Trợ năng → RinNotch", "System Settings → Privacy & Security → Accessibility → RinNotch")), seconds: 5)
             return
         }
         guard installPasteTap() else { return }
         m.stack = []
         m.stackPasted = 0
         if m.expanded { AppDelegate.shared?.controller.collapse() }
-        m.showTransient(.message(symbol: "square.stack.3d.up.fill", title: "Copy liên tục: đã bật",
-                                 detail: "Copy từng thứ, rồi ⌘V dán lần lượt · nhấn ⌃ hai lần để tắt"), seconds: 2.5)
+        m.showTransient(.message(symbol: "square.stack.3d.up.fill", title: L("Copy liên tục: đã bật", "Paste Stack: on"),
+                                 detail: L("Copy từng thứ, rồi ⌘V dán lần lượt · nhấn ⌃ hai lần để tắt", "Copy things one at a time, then ⌘V pastes them in order · press ⌃ twice to turn off")), seconds: 2.5)
         Diag.log("Copy liên tục: bật")
     }
 
@@ -108,11 +108,11 @@ final class PasteStack {
         Diag.log("Copy liên tục: tắt (\(pasted)/\(s.count))")
         switch reason {
         case .done:
-            m.showTransient(.message(symbol: "checkmark.circle.fill", title: "Đã dán hết \(s.count) mục",
-                                     detail: "Copy liên tục đã tắt"), seconds: 2.5)
+            m.showTransient(.message(symbol: "checkmark.circle.fill", title: L("Đã dán hết \(s.count) mục", "Pasted all \(s.count) items"),
+                                     detail: L("Copy liên tục đã tắt", "Paste Stack is off")), seconds: 2.5)
         case .user:
-            m.showTransient(.message(symbol: "square.stack.3d.up.slash", title: "Đã tắt Copy liên tục",
-                                     detail: s.isEmpty ? "Chưa copy mục nào" : "Đã dán \(pasted)/\(s.count) mục"), seconds: 2.5)
+            m.showTransient(.message(symbol: "square.stack.3d.up.slash", title: L("Đã tắt Copy liên tục", "Paste Stack turned off"),
+                                     detail: s.isEmpty ? L("Chưa copy mục nào", "Nothing copied yet") : L("Đã dán \(pasted)/\(s.count) mục", "Pasted \(pasted)/\(s.count) items")), seconds: 2.5)
         case .quit:
             break
         }
@@ -271,6 +271,8 @@ final class PasteStack {
 
     fileprivate func handleListen(_ type: CGEventType, _ event: CGEvent) {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            // Ghi lại để biết người dùng có bị khựng phím thật không (luồng chính bận quá lâu → macOS tắt tap).
+            if type == .tapDisabledByTimeout { Diag.log("Copy liên tục: macOS tắt bộ nghe ⌃ vì chờ lâu, đã bật lại") }
             if let t = listenTap { CGEvent.tapEnable(tap: t, enable: true) }
             return
         }
@@ -300,6 +302,7 @@ final class PasteStack {
 
     fileprivate func handlePaste(_ type: CGEventType, _ event: CGEvent) {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            if type == .tapDisabledByTimeout { Diag.log("Copy liên tục: macOS tắt bộ bắt ⌘V vì chờ lâu, đã bật lại") }
             if let t = pasteTap { CGEvent.tapEnable(tap: t, enable: true) }
             return
         }

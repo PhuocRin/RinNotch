@@ -56,23 +56,23 @@ final class PrivateVault {
     func unlock() {
         guard let m = model, !m.privateUnlocked else { return }
         let ctx = LAContext()
-        ctx.localizedFallbackTitle = "Dùng mật khẩu máy"
+        ctx.localizedFallbackTitle = L("Dùng mật khẩu máy", "Use Mac password")
         // Vân tay vừa quét xong thì dùng luôn cho khoá trong chip bảo mật, không hỏi lần hai.
         ctx.touchIDAuthenticationAllowableReuseDuration = 30
         var err: NSError?
         guard ctx.canEvaluatePolicy(.deviceOwnerAuthentication, error: &err) else {
-            setStatus("Máy chưa đặt mật khẩu đăng nhập nên không khoá được")
+            setStatus(L("Máy chưa đặt mật khẩu đăng nhập nên không khoá được", "This Mac has no login password, so Private can\'t be locked"))
             return
         }
         m.privateStatus = nil
         // Chỉ một bước: vân tay (Touch ID), không có hoặc không đọc được thì mật khẩu máy. Không đụng tới Keychain.
-        ctx.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "mở Bộ nhớ tạm riêng tư") { ok, error in
+        ctx.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: L("mở Bộ nhớ tạm riêng tư", "open the private clipboard")) { ok, error in
             let cancelled = (error as? LAError).map { $0.code == .userCancel || $0.code == .appCancel || $0.code == .systemCancel } ?? false
             let box = ContextBox(ctx)
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     if ok { PrivateVault.shared.didUnlock(box.ctx) }
-                    else if !cancelled { PrivateVault.shared.setStatus("Chưa mở được, thử lại nha") }
+                    else if !cancelled { PrivateVault.shared.setStatus(L("Chưa mở được, thử lại nha", "Couldn\'t unlock, please try again")) }
                 }
             }
         }
@@ -119,7 +119,7 @@ final class PrivateVault {
             if kept.contains(where: { $0.sameContent(item) }) { Self.removeFile(item.id) } else { kept.append(item) }
         }
         list = kept
-        if bad > 0 { setStatus("Có \(bad) mục không giải mã được") }
+        if bad > 0 { setStatus(L("Có \(bad) mục không giải mã được", "\(bad) items couldn\'t be decrypted")) }
         withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
             m.privateClips = list
             m.privateUnlocked = true
@@ -166,7 +166,7 @@ final class PrivateVault {
             m.privateClips.removeAll { $0.id == dup.id }
         }
         guard Self.write(item) else {
-            setStatus("Không cất được vào Riêng tư")
+            setStatus(L("Không cất được vào Riêng tư", "Couldn\'t store in Private"))
             return
         }
         // Xoá mọi bản cùng nội dung ở lịch sử và Ghim (ghim lưu ra ổ dạng chữ thường), kể cả bản có mã khác.
@@ -421,19 +421,19 @@ struct VaultLockedView: View {
                     .font(.system(size: large ? 26 : 20, weight: .semibold))
                     .foregroundStyle(.white)
                     .scaleEffect(shimmer ? 1.06 : 1)
-                Text(m.privateCount == 0 ? "Riêng tư đang trống" : "\(m.privateCount) mục riêng tư đang khoá")
+                Text(m.privateCount == 0 ? L("Riêng tư đang trống", "Private is empty") : L("\(m.privateCount) mục riêng tư đang khoá", "\(m.privateCount) private items locked"))
                     .font(.system(size: 12.5, weight: .semibold))
                 if let s = m.privateStatus {
                     Text(s).font(.system(size: 10.5)).foregroundStyle(Color.orange).lineLimit(2).multilineTextAlignment(.center)
                 } else if m.privateCount == 0 {
-                    Text("Kéo thẻ thả vào nút Riêng tư, hoặc chuột phải thẻ → Chuyển vào Riêng tư")
+                    Text(L("Kéo thẻ thả vào nút Riêng tư, hoặc chuột phải thẻ → Chuyển vào Riêng tư", "Drag a card onto the Private button, or right-click a card → Move to Private"))
                         .font(.system(size: 10.5)).foregroundStyle(.white.opacity(0.6)).multilineTextAlignment(.center)
                 }
                 if m.privateCount > 0 {
                     Button { PrivateVault.shared.unlock() } label: {
                         HStack(spacing: 6) {
                             Image(systemName: "touchid").font(.system(size: 14, weight: .semibold))
-                            Text("Mở khoá bằng vân tay")
+                            Text(L("Mở khoá bằng vân tay", "Unlock with Touch ID"))
                         }
                     }
                     .buttonStyle(PillButton(prominent: true))
@@ -459,7 +459,7 @@ struct VaultLockButton: View {
         Button { PrivateVault.shared.lock() } label: {
             HStack(spacing: 4) {
                 Image(systemName: "lock.fill").font(.system(size: 10, weight: .bold))
-                Text("Khoá").font(.system(size: 10.5, weight: .semibold))
+                Text(L("Khoá", "Lock")).font(.system(size: 10.5, weight: .semibold))
             }
             .padding(.horizontal, 9)
             .frame(height: 26)
@@ -467,7 +467,7 @@ struct VaultLockButton: View {
             .contentShape(Capsule())
         }
         .buttonStyle(HoverPlain())
-        .help("Khoá Riêng tư ngay (tự khoá sau \(Int(PrivateVault.autoLockMinutes)) phút)")
+        .help(L("Khoá Riêng tư ngay (tự khoá sau \(Int(PrivateVault.autoLockMinutes)) phút)", "Lock Private now (auto-locks after \(Int(PrivateVault.autoLockMinutes)) min)"))
     }
 }
 

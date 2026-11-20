@@ -19,22 +19,22 @@ enum WindowLayout: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .left: return "Nửa trái"
-        case .right: return "Nửa phải"
-        case .top: return "Nửa trên"
-        case .bottom: return "Nửa dưới"
-        case .topLeft: return "Góc trên trái"
-        case .topRight: return "Góc trên phải"
-        case .bottomLeft: return "Góc dưới trái"
-        case .bottomRight: return "Góc dưới phải"
-        case .leftThird: return "⅓ trái"
-        case .centerThird: return "⅓ giữa"
-        case .rightThird: return "⅓ phải"
-        case .leftTwoThirds: return "⅔ trái"
-        case .rightTwoThirds: return "⅔ phải"
-        case .maximize: return "Phóng to"
-        case .center: return "Giữa màn hình"
-        case .nextScreen: return "Sang màn hình kế bên"
+        case .left: return L("Nửa trái", "Left half")
+        case .right: return L("Nửa phải", "Right half")
+        case .top: return L("Nửa trên", "Top half")
+        case .bottom: return L("Nửa dưới", "Bottom half")
+        case .topLeft: return L("Góc trên trái", "Top left")
+        case .topRight: return L("Góc trên phải", "Top right")
+        case .bottomLeft: return L("Góc dưới trái", "Bottom left")
+        case .bottomRight: return L("Góc dưới phải", "Bottom right")
+        case .leftThird: return L("⅓ trái", "Left ⅓")
+        case .centerThird: return L("⅓ giữa", "Center ⅓")
+        case .rightThird: return L("⅓ phải", "Right ⅓")
+        case .leftTwoThirds: return L("⅔ trái", "Left ⅔")
+        case .rightTwoThirds: return L("⅔ phải", "Right ⅔")
+        case .maximize: return L("Phóng to", "Maximize")
+        case .center: return L("Giữa màn hình", "Center")
+        case .nextScreen: return L("Sang màn hình kế bên", "Next display")
         }
     }
 
@@ -74,13 +74,13 @@ enum MultiLayout: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .twoSide: return "2 cạnh nhau"
-        case .twoStack: return "2 trên dưới"
-        case .threeMain: return "1 lớn 2 nhỏ"
-        case .threeColumns: return "3 cột dọc"
-        case .threeRows: return "3 hàng ngang"
-        case .fourGrid: return "4 góc"
-        case .all: return "Xếp hết"
+        case .twoSide: return L("2 cạnh nhau", "2 side by side")
+        case .twoStack: return L("2 trên dưới", "2 stacked")
+        case .threeMain: return L("1 lớn 2 nhỏ", "1 large 2 small")
+        case .threeColumns: return L("3 cột dọc", "3 columns")
+        case .threeRows: return L("3 hàng ngang", "3 rows")
+        case .fourGrid: return L("4 góc", "4 corners")
+        case .all: return L("Xếp hết", "Tile all")
         }
     }
 
@@ -155,7 +155,7 @@ enum WindowSnap {
         _ = timeoutOnce
         guard Access.trusted else {
             Access.prompt()
-            m.flashToolStatus("Cần quyền Trợ năng: Cài đặt hệ thống → Quyền riêng tư & Bảo mật → Trợ năng → RinNotch")
+            m.flashToolStatus(L("Cần quyền Trợ năng: Cài đặt hệ thống → Quyền riêng tư & Bảo mật → Trợ năng → RinNotch", "Needs Accessibility access: System Settings → Privacy & Security → Accessibility → RinNotch"))
             return false
         }
         return true
@@ -165,11 +165,11 @@ enum WindowSnap {
     private static func frontWindow(_ m: NotchModel) -> AXUIElement? {
         guard let app = NSWorkspace.shared.frontmostApplication, app.processIdentifier != getpid(),
               let win = focusedWindow(app.processIdentifier) else {
-            m.flashToolStatus("Không thấy cửa sổ nào của app đang dùng")
+            m.flashToolStatus(L("Không thấy cửa sổ nào của app đang dùng", "No window found for the current app"))
             return nil
         }
         if bool(win, "AXFullScreen") {
-            m.flashToolStatus("Cửa sổ đang toàn màn hình, thoát toàn màn hình trước nha")
+            m.flashToolStatus(L("Cửa sổ đang toàn màn hình, thoát toàn màn hình trước nha", "The window is full screen, exit full screen first"))
             return nil
         }
         return win
@@ -181,7 +181,7 @@ enum WindowSnap {
         if layout == .nextScreen {
             let screens = NSScreen.screens
             guard screens.count > 1, let from = screen(for: current), let i = screens.firstIndex(of: from) else {
-                m.flashToolStatus("Chỉ có một màn hình")
+                m.flashToolStatus(L("Chỉ có một màn hình", "There is only one display"))
                 return
             }
             let a = axVisible(from), b = axVisible(screens[(i + 1) % screens.count])
@@ -201,7 +201,7 @@ enum WindowSnap {
         guard ensureTrusted(m) else { return }
         let all = visibleWindows()
         guard let first = all.first, let s = screen(for: first.bounds) else {
-            m.flashToolStatus("Không thấy cửa sổ nào đang mở")
+            m.flashToolStatus(L("Không thấy cửa sổ nào đang mở", "No open windows found"))
             return
         }
         let limit = layout.count ?? 9
@@ -215,11 +215,11 @@ enum WindowSnap {
             if picked.count == limit { break }
         }
         if let need = layout.count, picked.count < need {
-            m.flashToolStatus("Cần \(need) cửa sổ đang mở trên màn hình này, đang thấy \(picked.count)")
+            m.flashToolStatus(L("Cần \(need) cửa sổ đang mở trên màn hình này, đang thấy \(picked.count)", "Needs \(need) open windows on this display, found \(picked.count)"))
             return
         }
         guard picked.count >= (layout == .all ? 2 : 1) else {
-            m.flashToolStatus("Cần ít nhất 2 cửa sổ đang mở")
+            m.flashToolStatus(L("Cần ít nhất 2 cửa sổ đang mở", "Needs at least 2 open windows"))
             return
         }
         let v = axVisible(s)
@@ -234,7 +234,7 @@ enum WindowSnap {
     static func restore(model m: NotchModel) {
         guard ensureTrusted(m) else { return }
         guard !undo.isEmpty else {
-            m.flashToolStatus("Chưa chỉnh cửa sổ nào nên không có chỗ cũ để trả")
+            m.flashToolStatus(L("Chưa chỉnh cửa sổ nào nên không có chỗ cũ để trả", "No window has been moved yet, nothing to restore"))
             return
         }
         for (w, f) in undo { set(w, f) }
@@ -470,7 +470,7 @@ struct WindowsView: View {
                     .truncationMode(.tail)
                 Spacer(minLength: 6)
                 if !trusted {
-                    Button("Cấp quyền") {
+                    Button(L("Cấp quyền", "Grant")) {
                         Access.prompt()
                         AppDelegate.shared?.controller.collapse()
                         Access.openSettings()
@@ -478,19 +478,19 @@ struct WindowsView: View {
                     .buttonStyle(PillButton(prominent: true))
                 }
                 Button { WindowSnap.minimize(model: m) } label: {
-                    HStack(spacing: 4) { Image(systemName: "minus.rectangle"); Text("Thu nhỏ") }
+                    HStack(spacing: 4) { Image(systemName: "minus.rectangle"); Text(L("Thu nhỏ", "Minimize")) }
                 }
                 .buttonStyle(PillButton())
-                .help("Cất cửa sổ đang dùng xuống Dock")
+                .help(L("Cất cửa sổ đang dùng xuống Dock", "Minimize the current window to the Dock"))
                 Button { WindowSnap.restore(model: m) } label: {
-                    HStack(spacing: 4) { Image(systemName: "arrow.uturn.backward"); Text("Trả lại") }
+                    HStack(spacing: 4) { Image(systemName: "arrow.uturn.backward"); Text(L("Trả lại", "Restore")) }
                 }
                 .buttonStyle(PillButton())
-                .help("Đưa các cửa sổ vừa chỉnh về chỗ cũ")
+                .help(L("Đưa các cửa sổ vừa chỉnh về chỗ cũ", "Put the windows you just moved back"))
             }
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 6) {
-                    caption("Cửa sổ đang dùng")
+                    caption(L("Cửa sổ đang dùng", "Current window"))
                     ForEach(Array(WindowLayout.rows.enumerated()), id: \.offset) { _, row in
                         HStack(spacing: 5) {
                             ForEach(row) { l in
@@ -508,7 +508,7 @@ struct WindowsView: View {
                 }
                 Rectangle().fill(Color.white.opacity(0.1)).frame(width: 1, height: 104)
                 VStack(alignment: .leading, spacing: 6) {
-                    caption("Xếp nhiều cửa sổ")
+                    caption(L("Xếp nhiều cửa sổ", "Arrange several windows"))
                     ForEach([Array(MultiLayout.allCases.prefix(4)), Array(MultiLayout.allCases.dropFirst(4))], id: \.first) { row in
                         HStack(spacing: 5) {
                             ForEach(row) { l in
@@ -536,9 +536,9 @@ struct WindowsView: View {
 
     private var statusText: String {
         if let s = m.toolStatus { return s }
-        guard trusted else { return "Cần quyền Trợ năng để chỉnh cửa sổ" }
-        guard let f = front, f.processIdentifier != getpid() else { return "Bấm vào app muốn chỉnh trước" }
-        return "Đang chỉnh: \(f.localizedName ?? "")"
+        guard trusted else { return L("Cần quyền Trợ năng để chỉnh cửa sổ", "Needs Accessibility access to move windows") }
+        guard let f = front, f.processIdentifier != getpid() else { return L("Bấm vào app muốn chỉnh trước", "Click the app you want to adjust first") }
+        return L("Đang chỉnh: \(f.localizedName ?? "")", "Adjusting: \(f.localizedName ?? "")")
     }
 
     private func caption(_ s: String) -> some View {

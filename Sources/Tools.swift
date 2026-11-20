@@ -33,7 +33,7 @@ enum Prompt {
         a.messageText = title
         a.informativeText = message
         a.addButton(withTitle: ok)
-        a.addButton(withTitle: "Huỷ")
+        a.addButton(withTitle: L("Huỷ", "Cancel"))
         let tf = NSTextField(string: value)
         tf.frame = NSRect(x: 0, y: 0, width: 300, height: 24)
         a.accessoryView = tf
@@ -147,8 +147,8 @@ final class KeepAwake {
         model?.keepAwakeUntil = nil
         guard !silent, let m = model else { return }
         switch reason {
-        case .ended: m.showTransient(.message(symbol: "cup.and.saucer", title: "Hết giờ giữ máy thức", detail: "Máy sẽ ngủ như bình thường"), seconds: 4)
-        case .lowBattery: m.showTransient(.message(symbol: "battery.25percent", title: "Đã tắt Giữ máy thức", detail: "Pin còn dưới 10%, để máy được ngủ"), seconds: 5)
+        case .ended: m.showTransient(.message(symbol: "cup.and.saucer", title: L("Hết giờ giữ máy thức", "Keep Awake ended"), detail: L("Máy sẽ ngủ như bình thường", "Your Mac will sleep as usual")), seconds: 4)
+        case .lowBattery: m.showTransient(.message(symbol: "battery.25percent", title: L("Đã tắt Giữ máy thức", "Keep Awake turned off"), detail: L("Pin còn dưới 10%, để máy được ngủ", "Battery below 10%, letting your Mac sleep")), seconds: 5)
         default: break
         }
     }
@@ -213,12 +213,13 @@ final class KeyboardLock {
         guard model?.keyboardLockUntil != nil else { return }
         model?.keyboardLockUntil = nil
         AppDelegate.shared?.controller.lockChanged()
-        model?.showTransient(.message(symbol: "keyboard", title: "Đã mở khoá bàn phím", detail: "Gõ phím như bình thường"), seconds: 2.5)
+        model?.showTransient(.message(symbol: "keyboard", title: L("Đã mở khoá bàn phím", "Keyboard unlocked"), detail: L("Gõ phím như bình thường", "You can type as usual")), seconds: 2.5)
     }
 
     /// true = nuốt phím (không cho tới app nào).
     fileprivate func handle(_ type: CGEventType, _ event: CGEvent) -> Bool {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            if type == .tapDisabledByTimeout { Diag.log("Lau bàn phím: macOS tắt bộ chặn phím vì chờ lâu, đã bật lại") }
             if let t = tap { CGEvent.tapEnable(tap: t, enable: true) }
             return false
         }
@@ -259,7 +260,7 @@ enum ColorPick {
                         guard let c = color?.usingColorSpace(.sRGB) else { return }
                         let hex = ClipParse.hex(c)
                         m.lastColor = hex
-                        ClipboardWatcher.shared?.copyText(hex, source: "RinNotch · Lấy mã màu")
+                        ClipboardWatcher.shared?.copyText(hex, source: L("RinNotch · Lấy mã màu", "RinNotch · Color Picker"))
                         m.showTransient(.colorPicked(hex: hex), seconds: 3)
                     }
                 }
@@ -358,41 +359,41 @@ struct ToolsView: View {
     var body: some View {
         let cols = [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)]
         LazyVGrid(columns: cols, spacing: 10) {
-            card(symbol: "eyedropper.halffull", tint: .pink, title: "Lấy mã màu",
-                 detail: m.lastColor.map { "Vừa lấy \($0) · đã chép" } ?? "Bấm rồi chọn điểm bất kỳ trên màn hình") {
+            card(symbol: "eyedropper.halffull", tint: .pink, title: L("Lấy mã màu", "Color Picker"),
+                 detail: m.lastColor.map { L("Vừa lấy \($0) · đã chép", "Picked \($0) · copied") } ?? L("Bấm rồi chọn điểm bất kỳ trên màn hình", "Click, then pick any point on screen")) {
                 if let hex = m.lastColor, let c = ClipParse.color(hex) {
                     RoundedRectangle(cornerRadius: 5).fill(Color(nsColor: c)).frame(width: 18, height: 18)
                         .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color.white.opacity(0.3)))
                 }
-                Button("Lấy màu") { ColorPick.start(m) }.buttonStyle(PillButton(prominent: true))
+                Button(L("Lấy màu", "Pick")) { ColorPick.start(m) }.buttonStyle(PillButton(prominent: true))
             }
-            card(symbol: m.keepAwakeOn ? "cup.and.saucer.fill" : "cup.and.saucer", tint: .teal, title: "Giữ máy thức",
+            card(symbol: m.keepAwakeOn ? "cup.and.saucer.fill" : "cup.and.saucer", tint: .teal, title: L("Giữ máy thức", "Keep Awake"),
                  detail: awakeDetail) {
                 Menu {
-                    Button("15 phút") { KeepAwake.shared.start(minutes: 15) }
-                    Button("30 phút") { KeepAwake.shared.start(minutes: 30) }
-                    Button("1 giờ") { KeepAwake.shared.start(minutes: 60) }
-                    Button("2 giờ") { KeepAwake.shared.start(minutes: 120) }
-                    Button("4 giờ") { KeepAwake.shared.start(minutes: 240) }
-                    Button("Tới khi tắt") { KeepAwake.shared.start(minutes: nil) }
+                    Button(L("15 phút", "15 min")) { KeepAwake.shared.start(minutes: 15) }
+                    Button(L("30 phút", "30 min")) { KeepAwake.shared.start(minutes: 30) }
+                    Button(L("1 giờ", "1 hour")) { KeepAwake.shared.start(minutes: 60) }
+                    Button(L("2 giờ", "2 hours")) { KeepAwake.shared.start(minutes: 120) }
+                    Button(L("4 giờ", "4 hours")) { KeepAwake.shared.start(minutes: 240) }
+                    Button(L("Tới khi tắt", "Until turned off")) { KeepAwake.shared.start(minutes: nil) }
                 } label: {
-                    Text(m.keepAwakeOn ? "Đổi" : "Bật").font(.system(size: 11, weight: .semibold))
+                    Text(m.keepAwakeOn ? L("Đổi", "Change") : L("Bật", "Turn on")).font(.system(size: 11, weight: .semibold))
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
                 .padding(.horizontal, 10).padding(.vertical, 5)
                 .background(Capsule().fill(m.keepAwakeOn ? Color.white.opacity(0.12) : Color.accentColor))
                 if m.keepAwakeOn {
-                    Button("Tắt") { KeepAwake.shared.stop(.user) }.buttonStyle(PillButton())
+                    Button(L("Tắt", "Turn off")) { KeepAwake.shared.stop(.user) }.buttonStyle(PillButton())
                 }
             }
-            card(symbol: "keyboard", tint: .orange, title: "Lau bàn phím",
-                 detail: trusted ? "Khoá phím \(Int(KeyboardLock.minutes)) phút. Esc 5 lần để mở sớm"
-                                 : "Cần quyền Trợ năng để khoá phím") {
+            card(symbol: "keyboard", tint: .orange, title: L("Lau bàn phím", "Clean Keyboard"),
+                 detail: trusted ? L("Khoá phím \(Int(KeyboardLock.minutes)) phút. Esc 5 lần để mở sớm", "Locks keys for \(Int(KeyboardLock.minutes)) min. Press Esc 5 times to unlock early")
+                                 : L("Cần quyền Trợ năng để khoá phím", "Needs Accessibility access to lock keys")) {
                 if trusted {
-                    Button("Khoá phím") { KeyboardLock.shared.lock() }.buttonStyle(PillButton(prominent: true))
+                    Button(L("Khoá phím", "Lock keys")) { KeyboardLock.shared.lock() }.buttonStyle(PillButton(prominent: true))
                 } else {
-                    Button("Cấp quyền") {
+                    Button(L("Cấp quyền", "Grant")) {
                         Access.prompt()
                         AppDelegate.shared?.controller.collapse()
                         Access.openSettings()
@@ -400,19 +401,19 @@ struct ToolsView: View {
                     .buttonStyle(PillButton(prominent: true))
                 }
             }
-            card(symbol: "character.bubble", tint: .blue, title: "Dịch nhanh",
-                 detail: "Bôi đen chữ ở app bất kỳ rồi bấm \(HotkeyCenter.combo(.translate)?.display ?? "phím Dịch nhanh")") {
-                Button("Mở") { m.tab = .translate }.buttonStyle(PillButton(prominent: true))
+            card(symbol: "character.bubble", tint: .blue, title: L("Dịch nhanh", "Quick Translate"),
+                 detail: L("Bôi đen chữ ở app bất kỳ rồi bấm \(HotkeyCenter.combo(.translate)?.display ?? "phím Dịch nhanh")", "Select text in any app, then press \(HotkeyCenter.combo(.translate)?.display ?? "the Quick Translate shortcut")")) {
+                Button(L("Mở", "Open")) { m.tab = .translate }.buttonStyle(PillButton(prominent: true))
             }
         }
         .onAppear { trusted = Access.trusted }
     }
 
     private var awakeDetail: String {
-        guard m.keepAwakeOn else { return "Màn hình và máy không tự ngủ, hợp lúc xuất video dài" }
-        guard let until = m.keepAwakeUntil else { return "Đang bật · tới khi tắt" }
+        guard m.keepAwakeOn else { return L("Màn hình và máy không tự ngủ, hợp lúc xuất video dài", "Display and Mac won\'t sleep, handy for long video exports") }
+        guard let until = m.keepAwakeUntil else { return L("Đang bật · tới khi tắt", "On · until turned off") }
         let left = max(Int(until.timeIntervalSinceNow / 60 + 0.99), 1)
-        return left >= 60 ? "Đang bật · còn \(left / 60) giờ \(left % 60) phút" : "Đang bật · còn \(left) phút"
+        return left >= 60 ? L("Đang bật · còn \(left / 60) giờ \(left % 60) phút", "On · \(left / 60) h \(left % 60) min left") : L("Đang bật · còn \(left) phút", "On · \(left) min left")
     }
 
     private func card<Trailing: View>(symbol: String, tint: Color, title: String, detail: String,

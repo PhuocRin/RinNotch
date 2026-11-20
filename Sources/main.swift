@@ -98,15 +98,15 @@ enum Tab: String, CaseIterable, Identifiable {
     var number: Int { (Tab.allCases.firstIndex(of: self) ?? 0) + 1 }
     var title: String {
         switch self {
-        case .media: return "Nhạc"
-        case .shelf: return "Kệ file"
-        case .clipboard: return "Bộ nhớ tạm"
-        case .notes: return "Ghi chú"
-        case .timer: return "Hẹn giờ"
-        case .system: return "Hệ thống"
-        case .tools: return "Công cụ"
-        case .translate: return "Dịch nhanh"
-        case .windows: return "Cửa sổ"
+        case .media: return L("Nhạc", "Music")
+        case .shelf: return L("Kệ file", "Shelf")
+        case .clipboard: return L("Bộ nhớ tạm", "Clipboard")
+        case .notes: return L("Ghi chú", "Notes")
+        case .timer: return L("Hẹn giờ", "Timer")
+        case .system: return L("Hệ thống", "System")
+        case .tools: return L("Công cụ", "Tools")
+        case .translate: return L("Dịch nhanh", "Quick Translate")
+        case .windows: return L("Cửa sổ", "Windows")
         }
     }
     /// Màu riêng của từng mục: chỉ tô cho icon mục đang chọn / đang rê chuột, các mục còn lại giữ màu trắng.
@@ -709,7 +709,7 @@ struct CompactView: View {
         if m.stack != nil {
             HStack(spacing: 5) {
                 Image(systemName: "square.stack.3d.up.fill")
-                Text("Copy liên tục")
+                Text(L("Copy liên tục", "Paste Stack"))
             }
             .font(.system(size: 12, weight: .semibold))
             .foregroundStyle(Color.orange)
@@ -730,7 +730,7 @@ struct CompactView: View {
             HStack(spacing: 5) {
                 Image(systemName: d.copying ? "doc.on.doc.fill" : "arrow.down.circle.fill")
                     .foregroundStyle(Color.blue)
-                Text(d.fraction.map { "\(Int($0 * 100))%" } ?? (d.count > 1 ? "\(d.count) file" : "Đang tải"))
+                Text(d.fraction.map { "\(Int($0 * 100))%" } ?? (d.count > 1 ? "\(d.count) file" : L("Đang tải", "Downloading")))
                     .monospacedDigit()
             }
             .font(.system(size: 12, weight: .semibold))
@@ -769,7 +769,7 @@ struct CompactView: View {
                     .frame(width: 16, height: 16)
                 }
             } else {
-                Text("Bấm giờ").font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.6))
+                Text(L("Bấm giờ", "Stopwatch")).font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.6))
             }
         } else if let d = m.downloads {
             HStack(spacing: 6) {
@@ -882,15 +882,15 @@ struct BannerView: View {
                 .foregroundStyle(Color.orange)
                 .frame(width: 46)
             VStack(alignment: .leading, spacing: 3) {
-                Text("Đang khoá bàn phím để lau").font(.system(size: 14, weight: .semibold)).foregroundStyle(Color.orange)
+                Text(L("Đang khoá bàn phím để lau", "Keyboard locked for cleaning")).font(.system(size: 14, weight: .semibold)).foregroundStyle(Color.orange)
                 TimelineView(.periodic(from: .now, by: 1)) { ctx in
-                    Text(m.lockEscCount > 0 ? "Esc \(m.lockEscCount)/5 · tự mở sau \(formatClock(until.timeIntervalSince(ctx.date)))"
-                                            : "Bấm Esc 5 lần để mở · tự mở sau \(formatClock(until.timeIntervalSince(ctx.date)))")
+                    Text(m.lockEscCount > 0 ? L("Esc \(m.lockEscCount)/5 · tự mở sau \(formatClock(until.timeIntervalSince(ctx.date)))", "Esc \(m.lockEscCount)/5 · unlocks in \(formatClock(until.timeIntervalSince(ctx.date)))")
+                                            : L("Bấm Esc 5 lần để mở · tự mở sau \(formatClock(until.timeIntervalSince(ctx.date)))", "Press Esc 5 times to unlock · unlocks in \(formatClock(until.timeIntervalSince(ctx.date)))"))
                         .font(.system(size: 12)).monospacedDigit().foregroundStyle(.white.opacity(0.6))
                 }
             }
             Spacer(minLength: 0)
-            Button("Mở khoá") { KeyboardLock.shared.unlock() }.buttonStyle(PillButton(prominent: true))
+            Button(L("Mở khoá", "Unlock")) { KeyboardLock.shared.unlock() }.buttonStyle(PillButton(prominent: true))
         }
         .padding(.horizontal, 22)
         .frame(maxHeight: .infinity)
@@ -915,9 +915,9 @@ struct BannerView: View {
     @ViewBuilder var transientRow: some View {
             switch m.transient {
             case .offline:
-                simpleRow(symbol: "wifi.slash", tint: .red, title: "Mất kết nối mạng", detail: "Kiểm tra Wi-Fi hoặc dây mạng")
+                simpleRow(symbol: "wifi.slash", tint: .red, title: L("Mất kết nối mạng", "No internet connection"), detail: L("Kiểm tra Wi-Fi hoặc dây mạng", "Check Wi-Fi or the network cable"))
             case .online:
-                simpleRow(symbol: "wifi", tint: .green, title: "Đã có mạng lại", detail: "Kết nối internet đã trở lại")
+                simpleRow(symbol: "wifi", tint: .green, title: L("Đã có mạng lại", "Back online"), detail: L("Kết nối internet đã trở lại", "Your internet connection is back"))
             case .message(let symbol, let title, let detail):
                 simpleRow(symbol: symbol, tint: .white, title: title, detail: detail)
             case .colorPicked(let hex):
@@ -929,7 +929,7 @@ struct BannerView: View {
                         .padding(.horizontal, 3)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(hex).font(.system(size: 16, weight: .semibold, design: .monospaced))
-                        Text("Đã chép mã màu · chuột phải trong Bộ nhớ tạm để lấy dạng RGB, HSL")
+                        Text(L("Đã chép mã màu · chuột phải trong Bộ nhớ tạm để lấy dạng RGB, HSL", "Color code copied · right-click in Clipboard for RGB, HSL"))
                             .font(.system(size: 11)).foregroundStyle(.white.opacity(0.6)).lineLimit(1)
                     }
                     Spacer(minLength: 0)
@@ -944,8 +944,8 @@ struct BannerView: View {
                 HStack(spacing: 14) {
                     BigBattery(percent: p, charging: false)
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("Pin yếu").font(.system(size: 14, weight: .semibold)).foregroundStyle(Color.red)
-                        Text("Cắm sạc sớm nha").font(.system(size: 12)).foregroundStyle(.white.opacity(0.6))
+                        Text(L("Pin yếu", "Low battery")).font(.system(size: 14, weight: .semibold)).foregroundStyle(Color.red)
+                        Text(L("Cắm sạc sớm nha", "Plug in soon")).font(.system(size: 12)).foregroundStyle(.white.opacity(0.6))
                     }
                     Spacer(minLength: 0)
                     Text("\(p)%").font(.system(size: 26, weight: .semibold, design: .rounded)).monospacedDigit()
@@ -960,8 +960,8 @@ struct BannerView: View {
                         .foregroundStyle(Color.orange)
                         .frame(width: 46)
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("Hết giờ").font(.system(size: 14, weight: .semibold)).foregroundStyle(Color.orange)
-                        Text(minutes > 0 ? "Đã đếm ngược \(minutes) phút" : "Đã đếm ngược xong")
+                        Text(L("Hết giờ", "Time\'s up")).font(.system(size: 14, weight: .semibold)).foregroundStyle(Color.orange)
+                        Text(minutes > 0 ? L("Đã đếm ngược \(minutes) phút", "\(minutes)-minute countdown finished") : L("Đã đếm ngược xong", "Countdown finished"))
                             .font(.system(size: 12)).foregroundStyle(.white.opacity(0.6))
                     }
                     Spacer(minLength: 0)
@@ -983,12 +983,12 @@ struct BannerView: View {
                                 if let v = info.main { BatteryChip(label: nil, value: v) }
                                 if let v = info.left { BatteryChip(label: "T", value: v) }
                                 if let v = info.right { BatteryChip(label: "P", value: v) }
-                                if let v = info.caseLevel { BatteryChip(label: "Hộp", value: v) }
+                                if let v = info.caseLevel { BatteryChip(label: L("Hộp", "Case"), value: v) }
                             }
                         } else {
                             HStack(spacing: 5) {
                                 Circle().fill(Color.green).frame(width: 6, height: 6)
-                                Text("Đã kết nối").font(.system(size: 12, weight: .medium)).foregroundStyle(Color.green)
+                                Text(L("Đã kết nối", "Connected")).font(.system(size: 12, weight: .medium)).foregroundStyle(Color.green)
                             }
                         }
                     }
@@ -1005,10 +1005,10 @@ struct BannerView: View {
         HStack(spacing: 14) {
             BigBattery(percent: percent, charging: charging)
             VStack(alignment: .leading, spacing: 3) {
-                Text(charging ? "Đang sạc" : "Đã ngắt sạc")
+                Text(charging ? L("Đang sạc", "Charging") : L("Đã ngắt sạc", "Charger disconnected"))
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(charging ? Color.green : Color.white)
-                Text(charging ? "Pin đang được sạc" : "Đang dùng pin")
+                Text(charging ? L("Pin đang được sạc", "Battery is charging") : L("Đang dùng pin", "On battery power"))
                     .font(.system(size: 12))
                     .foregroundStyle(.white.opacity(0.6))
             }
@@ -1102,13 +1102,13 @@ struct RecordingBadge: View {
                     .foregroundStyle(info.paused ? Color.white.opacity(0.65) : Color(red: 1, green: 0.55, blue: 0.5))
             }
             if showName {
-                Text(info.paused ? "· \(info.appName) tạm dừng" : "· \(info.appName)")
+                Text(info.paused ? L("· \(info.appName) tạm dừng", "· \(info.appName) paused") : "· \(info.appName)")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.6))
                     .lineLimit(1)
             }
         }
-        .help(info.paused ? "\(info.appName) đang tạm dừng" : "\(info.appName) đang dùng micro")
+        .help(info.paused ? L("\(info.appName) đang tạm dừng", "\(info.appName) is paused") : L("\(info.appName) đang dùng micro", "\(info.appName) is using the mic"))
     }
 
     /// Icon app đang ghi, nhớ theo pid (khỏi hỏi hệ thống mỗi lần vẽ lại).
@@ -1182,7 +1182,7 @@ struct ExpandedView: View {
                         // Đủ 9 mục + 3 nút thì không còn chỗ cho tên app và sóng âm lúc bung (dạng gọn vẫn có sóng âm).
                         RecordingBadge(info: r, showName: false)
                         if m.micDenied {
-                            Button("Cấp quyền micro") {
+                            Button(L("Cấp quyền micro", "Allow microphone")) {
                                 if let u = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
                                     NSWorkspace.shared.open(u)
                                 }
@@ -1192,12 +1192,12 @@ struct ExpandedView: View {
                     }
                 }
                 // Bánh răng: mở Cài đặt ngay.
-                NotchIconButton(symbol: "gearshape.fill", tint: .white.opacity(0.85), name: "Cài đặt") {
+                NotchIconButton(symbol: "gearshape.fill", tint: .white.opacity(0.85), name: L("Cài đặt", "Settings")) {
                     AppDelegate.shared?.controller.collapse()
                     AppDelegate.shared?.showSettings()
                 }
                 // Dấu ? nhỏ: mở Mẹo dùng đúng mục đang xem.
-                NotchIconButton(symbol: "questionmark", tint: .white.opacity(0.85), name: "Mẹo dùng") {
+                NotchIconButton(symbol: "questionmark", tint: .white.opacity(0.85), name: L("Mẹo dùng", "Tips")) {
                     let topic = TipTopic(tab: m.tab)
                     AppDelegate.shared?.controller.collapse()
                     AppDelegate.shared?.showTips(topic)
@@ -1205,7 +1205,7 @@ struct ExpandedView: View {
                 // Trái tim nhỏ: bấm vào mới mở cửa sổ Ủng hộ tác giả, không tự hiện gì.
                 // Đang ghi âm thì cất trái tim cho đủ chỗ (vẫn mở được từ menu thanh menu).
                 if m.recording == nil {
-                    NotchIconButton(symbol: "heart.fill", tint: Color.pink.opacity(0.9), name: "Ủng hộ tác giả", tagAlignment: .bottomTrailing) {
+                    NotchIconButton(symbol: "heart.fill", tint: Color.pink.opacity(0.9), name: L("Ủng hộ tác giả", "Support the author"), tagAlignment: .bottomTrailing) {
                         AppDelegate.shared?.controller.collapse()
                         AppDelegate.shared?.showSupport()
                     }
@@ -1432,8 +1432,8 @@ struct MediaView: View {
         } else {
             VStack(spacing: 6) {
                 Image(systemName: "music.note").font(.system(size: 22))
-                Text("Chưa có gì đang phát").font(.system(size: 12, weight: .semibold))
-                Text(MediaWatcher.shared?.statusText ?? "Mở nhạc hoặc video, tên bài sẽ hiện ở đây")
+                Text(L("Chưa có gì đang phát", "Nothing playing")).font(.system(size: 12, weight: .semibold))
+                Text(MediaWatcher.shared?.statusText ?? L("Mở nhạc hoặc video, tên bài sẽ hiện ở đây", "Play music or a video and the title will show here"))
                     .font(.system(size: 11)).foregroundStyle(.white.opacity(0.55))
                     .multilineTextAlignment(.center)
             }
@@ -1463,8 +1463,8 @@ struct TimerView: View {
         HStack(spacing: 22) {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 6) {
-                    modeButton(.stopwatch, "Bấm giờ", "stopwatch")
-                    modeButton(.countdown, "Đếm ngược", "timer")
+                    modeButton(.stopwatch, L("Bấm giờ", "Stopwatch"), "stopwatch")
+                    modeButton(.countdown, L("Đếm ngược", "Countdown"), "timer")
                 }
                 if m.timer.mode == .stopwatch {
                     // Bấm giờ có phần trăm giây: vẽ lại theo khung hình chỉ khi đang chạy và mục này đang mở.
@@ -1489,24 +1489,24 @@ struct TimerView: View {
                     }
                 }
                 HStack(spacing: 8) {
-                    Button(m.timer.running ? "Tạm dừng" : (m.timer.accumulated > 0 ? "Tiếp tục" : "Bắt đầu")) {
+                    Button(m.timer.running ? L("Tạm dừng", "Pause") : (m.timer.accumulated > 0 ? L("Tiếp tục", "Resume") : L("Bắt đầu", "Start"))) {
                         TimerEngine.shared?.toggle()
                     }
                     .buttonStyle(PillButton(prominent: true))
-                    Button("Đặt lại") { TimerEngine.shared?.reset() }
+                    Button(L("Đặt lại", "Reset")) { TimerEngine.shared?.reset() }
                         .buttonStyle(PillButton())
                         .disabled(!m.timer.active)
                 }
             }
             if m.timer.mode == .countdown {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Đếm ngược").font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.5))
+                    Text(L("Đếm ngược", "Countdown")).font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.5))
                     LazyVGrid(columns: Array(repeating: GridItem(.fixed(58), spacing: 6), count: 3), spacing: 6) {
                         ForEach(presets, id: \.self) { min in
                             Button {
                                 TimerEngine.shared?.setCountdown(minutes: min)
                             } label: {
-                                Text(min == 60 ? "1 giờ" : "\(min) phút")
+                                Text(min == 60 ? L("1 giờ", "1 hour") : L("\(min) phút", "\(min) min"))
                                     .font(.system(size: 11, weight: .semibold))
                                     .frame(width: 58, height: 26)
                                     .background(Capsule().fill(Color.white.opacity(
@@ -1520,8 +1520,8 @@ struct TimerView: View {
                 }
             } else {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Bấm giờ tới phần trăm giây").font(.system(size: 12, weight: .semibold))
-                    Text("Đang chạy thì tai thỏ hiện giờ ở hai bên, rê chuột vào để dừng hoặc đặt lại.")
+                    Text(L("Bấm giờ tới phần trăm giây", "Stopwatch to the hundredth of a second")).font(.system(size: 12, weight: .semibold))
+                    Text(L("Đang chạy thì tai thỏ hiện giờ ở hai bên, rê chuột vào để dừng hoặc đặt lại.", "While running, the notch shows the time on both sides; hover to pause or reset."))
                         .font(.system(size: 11)).foregroundStyle(.white.opacity(0.55))
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -1746,32 +1746,32 @@ struct SystemView: View {
 
     var thermalText: (String, Color) {
         switch mon.thermal {
-        case .nominal: return ("Bình thường", .green)
-        case .fair: return ("Hơi ấm", .yellow)
-        case .serious: return ("Nóng", .orange)
-        case .critical: return ("Rất nóng", .red)
-        @unknown default: return ("Không rõ", .gray)
+        case .nominal: return (L("Bình thường", "Normal"), .green)
+        case .fair: return (L("Hơi ấm", "Warm"), .yellow)
+        case .serious: return (L("Nóng", "Hot"), .orange)
+        case .critical: return (L("Rất nóng", "Very hot"), .red)
+        @unknown default: return (L("Không rõ", "Unknown"), .gray)
         }
     }
 
     var body: some View {
         HStack(spacing: 10) {
             RingTile(title: "CPU", value: mon.cpu / 100, text: String(format: "%.0f%%", mon.cpu),
-                     detail: "đang dùng", colors: [Color.cyan, Color.blue])
+                     detail: L("đang dùng", "in use"), colors: [Color.cyan, Color.blue])
             RingTile(title: "RAM", value: mon.ramUsed / max(mon.ramTotal, 1), text: "\(SystemMonitor.gb(mon.ramUsed))",
-                     detail: "trên \(SystemMonitor.gb(mon.ramTotal)) GB", colors: [Color.purple, Color.pink])
+                     detail: L("trên \(SystemMonitor.gb(mon.ramTotal)) GB", "of \(SystemMonitor.gb(mon.ramTotal)) GB"), colors: [Color.purple, Color.pink])
             if let b = mon.battery {
-                RingTile(title: "Pin", value: Double(b) / 100, text: "\(b)%", detail: b <= 20 ? "pin yếu" : "còn lại",
+                RingTile(title: "Pin", value: Double(b) / 100, text: "\(b)%", detail: b <= 20 ? L("pin yếu", "low") : L("còn lại", "left"),
                          colors: b <= 20 ? [Color.red, Color.orange] : [Color.green, Color.mint])
             }
-            RingTile(title: "Nhiệt", value: Double(levelIndex + 1) / 4, text: thermalText.0, detail: "macOS báo",
+            RingTile(title: L("Nhiệt", "Thermal"), value: Double(levelIndex + 1) / 4, text: thermalText.0, detail: L("macOS báo", "per macOS"),
                      colors: [thermalText.1.opacity(0.7), thermalText.1], small: true)
             VStack(alignment: .leading, spacing: 8) {
-                Text("Mạng").font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.5))
+                Text(L("Mạng", "Network")).font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.5))
                 Label(SystemMonitor.speed(mon.down), systemImage: "arrow.down.circle.fill").foregroundStyle(Color.green)
                 Label(SystemMonitor.speed(mon.up), systemImage: "arrow.up.circle.fill").foregroundStyle(Color.blue)
                 Sparkline(values: mon.cpuHistory, maxValue: 100).stroke(Color.cyan.opacity(0.6), lineWidth: 1.2).frame(height: 22)
-                Text("CPU 30 giây qua").font(.system(size: 9.5)).foregroundStyle(.white.opacity(0.4))
+                Text(L("CPU 30 giây qua", "CPU, last 30 s")).font(.system(size: 9.5)).foregroundStyle(.white.opacity(0.4))
                 Spacer(minLength: 0)
             }
             .font(.system(size: 12, weight: .semibold))
@@ -1876,8 +1876,8 @@ struct ShelfView: View {
                 .overlay(
                     VStack(spacing: 6) {
                         Image(systemName: "tray.and.arrow.down").font(.system(size: 22))
-                        Text("Kéo file thả vào tai thỏ").font(.system(size: 12, weight: .semibold))
-                        Text("Kéo ra = sao chép · giữ ⌘ khi kéo = chuyển file")
+                        Text(L("Kéo file thả vào tai thỏ", "Drop files onto the notch")).font(.system(size: 12, weight: .semibold))
+                        Text(L("Kéo ra = sao chép · giữ ⌘ khi kéo = chuyển file", "Drag out = copy · hold ⌘ while dragging = move"))
                             .font(.system(size: 11)).foregroundStyle(.white.opacity(0.55))
                     }
                     .foregroundStyle(.white.opacity(0.8))
@@ -1909,7 +1909,7 @@ struct ShelfView: View {
                             .contentShape(Circle())
                     }
                     .buttonStyle(HoverPlain())
-                    .help("Mở bảng lớn (\(HotkeyCenter.combo(.library)?.display ?? "⌃⇧0"))")
+                    .help(L("Mở bảng lớn (\(HotkeyCenter.combo(.library)?.display ?? "⌃⇧0"))", "Open Big Board (\(HotkeyCenter.combo(.library)?.display ?? "⌃⇧0"))"))
                 }
                 GeometryReader { geo in
                     ScrollView(.horizontal, showsIndicators: false) {
@@ -1939,20 +1939,20 @@ struct ShelfView: View {
                     if m.shelfBusy {
                         ProgressView().controlSize(.mini)
                     }
-                    Text(m.shelfStatus ?? (sel.isEmpty ? "Kéo chuột để chọn nhiều · kéo ra = sao chép · giữ ⌘ = chuyển"
-                                     : "Đã chọn \(sel.count) file · kéo ra là đi cả nhóm"))
+                    Text(m.shelfStatus ?? (sel.isEmpty ? L("Kéo chuột để chọn nhiều · kéo ra = sao chép · giữ ⌘ = chuyển", "Drag to select several · drag out = copy · hold ⌘ = move")
+                                     : L("Đã chọn \(sel.count) file · kéo ra là đi cả nhóm", "\(sel.count) files selected · drag out to move them together")))
                         .font(.system(size: 11)).foregroundStyle(m.shelfStatus != nil ? Color.green.opacity(0.9) : .white.opacity(0.55))
                         .lineLimit(1)
                     Spacer(minLength: 4)
                     let targets = sel.isEmpty ? list : sel
                     Button("AirDrop") { Actions.airDrop(targets) }.buttonStyle(PillButton(prominent: true)).disabled(targets.isEmpty)
-                    Button("Sao chép") { Actions.copyFiles(targets) }.buttonStyle(PillButton()).disabled(targets.isEmpty)
+                    Button(L("Sao chép", "Copy")) { Actions.copyFiles(targets) }.buttonStyle(PillButton()).disabled(targets.isEmpty)
                     Menu {
                         ForEach(ShelfTools.ops(for: targets), id: \.self) { op in
                             Button(op.title) { ShelfTools.run(op, on: targets, m: m) }
                         }
                     } label: {
-                        Text("Xử lý").font(.system(size: 11, weight: .semibold))
+                        Text(L("Xử lý", "Process")).font(.system(size: 11, weight: .semibold))
                     }
                     .menuStyle(.borderlessButton)
                     .menuIndicator(.visible)
@@ -1961,11 +1961,11 @@ struct ShelfView: View {
                     .background(Capsule().fill(Color.white.opacity(0.12)))
                     .hoverPop(scale: 1.09)
                     .disabled(m.shelfBusy || targets.isEmpty)
-                    .help("Đổi định dạng, nén, thu nhỏ, xoá nền ảnh · gộp PDF · nén ZIP")
+                    .help(L("Đổi định dạng, nén, thu nhỏ, xoá nền ảnh · gộp PDF · nén ZIP", "Convert, compress, resize, remove image backgrounds · combine PDF · ZIP"))
                     if sel.isEmpty {
-                        Button("Xoá kệ") { m.clearShelf() }.buttonStyle(PillButton())
+                        Button(L("Xoá kệ", "Clear Shelf")) { m.clearShelf() }.buttonStyle(PillButton())
                     } else {
-                        Button("Bỏ khỏi kệ") { m.removeFromShelf(sel) }.buttonStyle(PillButton())
+                        Button(L("Bỏ khỏi kệ", "Remove from Shelf")) { m.removeFromShelf(sel) }.buttonStyle(PillButton())
                     }
                 }
             }
@@ -2004,7 +2004,7 @@ struct ShelfItem: View {
             HStack(spacing: 5) {
                 Image(systemName: kind.symbol).font(.system(size: 9, weight: .semibold)).foregroundStyle(.white.opacity(0.6))
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(exists ? url.lastPathComponent : "File không còn")
+                    Text(exists ? url.lastPathComponent : L("File không còn", "File is gone"))
                         .font(.system(size: 10.5, weight: .semibold))
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -2191,14 +2191,14 @@ final class FileDragNSView: NSView, NSDraggingSource {
         let us = targets
         let n = us.count
         let menu = NSMenu()
-        menu.addItem(ClosureMenuItem(n > 1 ? "Mở \(n) file" : "Mở") { for u in us { NSWorkspace.shared.open(u) } })
-        menu.addItem(ClosureMenuItem(n > 1 ? "Gửi AirDrop \(n) file" : "Gửi AirDrop") { Actions.airDrop(us) })
-        menu.addItem(ClosureMenuItem(n > 1 ? "Sao chép \(n) file" : "Sao chép") { Actions.copyFiles(us) })
-        menu.addItem(ClosureMenuItem("Hiện trong Finder") { NSWorkspace.shared.activateFileViewerSelecting(us) })
+        menu.addItem(ClosureMenuItem(n > 1 ? L("Mở \(n) file", "Open \(n) files") : L("Mở", "Open")) { for u in us { NSWorkspace.shared.open(u) } })
+        menu.addItem(ClosureMenuItem(n > 1 ? L("Gửi AirDrop \(n) file", "AirDrop \(n) files") : L("Gửi AirDrop", "AirDrop")) { Actions.airDrop(us) })
+        menu.addItem(ClosureMenuItem(n > 1 ? L("Sao chép \(n) file", "Copy \(n) files") : L("Sao chép", "Copy")) { Actions.copyFiles(us) })
+        menu.addItem(ClosureMenuItem(L("Hiện trong Finder", "Show in Finder")) { NSWorkspace.shared.activateFileViewerSelecting(us) })
         if n == 1, let u = us.first, FileManager.default.fileExists(atPath: u.path) {
-            menu.addItem(ClosureMenuItem("Đổi tên file…") { [weak m] in if let m { ShelfRename.run(u, m: m) } })
+            menu.addItem(ClosureMenuItem(L("Đổi tên file…", "Rename file…")) { [weak m] in if let m { ShelfRename.run(u, m: m) } })
         }
-        let tools = NSMenuItem(title: "Xử lý", action: nil, keyEquivalent: "")
+        let tools = NSMenuItem(title: L("Xử lý", "Process"), action: nil, keyEquivalent: "")
         let sub = NSMenu()
         for op in ShelfTools.ops(for: us) {
             sub.addItem(ClosureMenuItem(op.title) { [weak m] in if let m { ShelfTools.run(op, on: us, m: m) } })
@@ -2207,8 +2207,8 @@ final class FileDragNSView: NSView, NSDraggingSource {
         tools.isEnabled = !m.shelfBusy
         menu.addItem(tools)
         menu.addItem(.separator())
-        menu.addItem(ClosureMenuItem("Chọn tất cả") { [weak m] in m?.shelfSelection = Set(m?.shelf ?? []) })
-        menu.addItem(ClosureMenuItem(n > 1 ? "Bỏ \(n) file khỏi kệ" : "Bỏ khỏi kệ") { [weak m] in m?.removeFromShelf(us) })
+        menu.addItem(ClosureMenuItem(L("Chọn tất cả", "Select all")) { [weak m] in m?.shelfSelection = Set(m?.shelf ?? []) })
+        menu.addItem(ClosureMenuItem(n > 1 ? L("Bỏ \(n) file khỏi kệ", "Remove \(n) files from Shelf") : L("Bỏ khỏi kệ", "Remove from Shelf")) { [weak m] in m?.removeFromShelf(us) })
         return menu
     }
 }
@@ -2279,7 +2279,7 @@ struct NotesView: View {
                             return .ignored
                         }
                     if m.noteDraft.isEmpty {
-                        Text("Gõ ý tưởng… Enter để xuống dòng")
+                        Text(L("Gõ ý tưởng… Enter để xuống dòng", "Type an idea… Enter for a new line"))
                             .font(.system(size: 13))
                             .foregroundStyle(.white.opacity(0.35))
                             .padding(.horizontal, 12)
@@ -2290,13 +2290,13 @@ struct NotesView: View {
                 .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.09)))
                 .hoverOutline()
                 HStack(spacing: 8) {
-                    Text(m.noteStatus ?? "Lưu bằng nút Lưu hoặc ⌘ Enter")
+                    Text(m.noteStatus ?? L("Lưu bằng nút Lưu hoặc ⌘ Enter", "Save with the Save button or ⌘ Enter"))
                         .font(.system(size: 11))
                         .foregroundStyle(.white.opacity(0.6))
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 0)
-                    Button("Lưu vào Notes") { NotesSaver.save(m) }
+                    Button(L("Lưu vào Notes", "Save to Notes")) { NotesSaver.save(m) }
                         .buttonStyle(PillButton(prominent: true))
                         .disabled(m.noteDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     Button {
@@ -2309,12 +2309,12 @@ struct NotesView: View {
                             .contentShape(Circle())
                     }
                     .buttonStyle(HoverPlain())
-                    .help("Mở bảng lớn")
+                    .help(L("Mở bảng lớn", "Open Big Board"))
                 }
             }
             if !m.notes.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Gần đây").font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.5))
+                    Text(L("Gần đây", "Recent")).font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.5))
                     ScrollView(.vertical, showsIndicators: false) {
                         VStack(alignment: .leading, spacing: 6) {
                             ForEach(m.notes.prefix(10)) { n in
@@ -2345,7 +2345,7 @@ enum NotesSaver {
         let item = NoteItem(text: text, date: Date(), savedToNotes: false)
         m.notes.insert(item, at: 0)
         m.noteDraft = ""
-        m.noteStatus = "Đang lưu vào Notes…"
+        m.noteStatus = L("Đang lưu vào Notes…", "Saving to Notes…")
         m.saveNotes()
 
         let html = text
@@ -2357,7 +2357,7 @@ enum NotesSaver {
         // thì osascript hiểu nhầm là tuỳ chọn và không lưu được.
         let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("rinnotch-note-\(UUID().uuidString).html")
         do { try html.write(to: tmp, atomically: true, encoding: .utf8) } catch {
-            m.noteStatus = "Chưa lưu được vào Notes, ghi chú vẫn được giữ trong app."
+            m.noteStatus = L("Chưa lưu được vào Notes, ghi chú vẫn được giữ trong app.", "Couldn\'t save to Notes; the note is still kept in the app.")
             return
         }
         let script = [
@@ -2384,17 +2384,17 @@ enum NotesSaver {
                 if let i = m.notes.firstIndex(where: { $0.id == id }) { m.notes[i].savedToNotes = ok }
                 m.saveNotes()
                 if ok {
-                    m.noteStatus = "Đã lưu vào Notes, thư mục RinNotch ✓"
+                    m.noteStatus = L("Đã lưu vào Notes, thư mục RinNotch ✓", "Saved to Notes, RinNotch folder ✓")
                 } else if msg.contains("-1743") || msg.lowercased().contains("not authorized") {
-                    m.noteStatus = "Chưa có quyền: Cài đặt → Quyền riêng tư & Bảo mật → Tự động hoá → RinNotch → bật Notes. Ghi chú vẫn được giữ trong app."
+                    m.noteStatus = L("Chưa có quyền: Cài đặt → Quyền riêng tư & Bảo mật → Tự động hoá → RinNotch → bật Notes. Ghi chú vẫn được giữ trong app.", "No permission yet: System Settings → Privacy & Security → Automation → RinNotch → turn on Notes. The note is still kept in the app.")
                 } else {
-                    m.noteStatus = "Chưa lưu được vào Notes, ghi chú vẫn được giữ trong app."
+                    m.noteStatus = L("Chưa lưu được vào Notes, ghi chú vẫn được giữ trong app.", "Couldn\'t save to Notes; the note is still kept in the app.")
                 }
             }
         }
         do { try p.run() } catch {
             try? FileManager.default.removeItem(at: tmp)
-            m.noteStatus = "Chưa lưu được vào Notes, ghi chú vẫn được giữ trong app."
+            m.noteStatus = L("Chưa lưu được vào Notes, ghi chú vẫn được giữ trong app.", "Couldn\'t save to Notes; the note is still kept in the app.")
         }
     }
 }
@@ -2707,7 +2707,7 @@ final class RecordingWatcher {
                 }
             } else {
                 session = RecordingInfo(
-                    appName: app.localizedName ?? "Ứng dụng",
+                    appName: app.localizedName ?? L("Ứng dụng", "App"),
                     bundleID: app.bundleIdentifier,
                     pid: app.processIdentifier,
                     segmentStart: now
@@ -2879,7 +2879,7 @@ final class MediaWatcher {
         let script = res.appendingPathComponent("rinmedia.pl")
         let lib = res.appendingPathComponent("librinmedia.dylib")
         guard FileManager.default.fileExists(atPath: script.path), FileManager.default.fileExists(atPath: lib.path) else {
-            statusText = "Thiếu trình đọc nhạc trong app"
+            statusText = L("Thiếu trình đọc nhạc trong app", "The music reader is missing from the app")
             Diag.log("Thiếu rinmedia.pl hoặc librinmedia.dylib")
             return
         }
@@ -2913,7 +2913,7 @@ final class MediaWatcher {
             startedAt = Date()
             Diag.log("Đã chạy trình đọc nhạc")
         } catch {
-            statusText = "Không chạy được trình đọc nhạc"
+            statusText = L("Không chạy được trình đọc nhạc", "Couldn\'t start the music reader")
             Diag.log("Không chạy được perl: \(error.localizedDescription)")
         }
     }
@@ -2938,7 +2938,7 @@ final class MediaWatcher {
         startedAt = nil
         Diag.log("Trình đọc nhạc dừng (mã \(code))")
         guard restarts < 5 else {
-            statusText = "Trình đọc nhạc dừng nhiều lần, có thể macOS đã chặn cách này"
+            statusText = L("Trình đọc nhạc dừng nhiều lần, có thể macOS đã chặn cách này", "The music reader stopped several times; macOS may have blocked this method")
             return
         }
         restarts += 1
@@ -3760,8 +3760,17 @@ final class NotchController {
 
 // MARK: - Ngôn ngữ (theo ngôn ngữ của máy)
 
+/// Ngôn ngữ máy, đọc một lần lúc mở app (đổi ngôn ngữ máy thì macOS cũng bắt mở lại app).
+/// Từ 1.5 chữ trên tai thỏ cũng đi qua đây nên L() được gọi rất nhiều lần mỗi lần vẽ: không đọc lại mỗi lần.
+/// Thử giao diện ngôn ngữ khác mà không đổi ngôn ngữ máy (Terminal, xong thoát rồi mở lại RinNotch):
+/// `defaults write com.phuocrin.rinnotch appLanguage en` (hoặc `vi`); bỏ: `defaults delete com.phuocrin.rinnotch appLanguage`.
+let appIsVietnamese: Bool = {
+    if let forced = UserDefaults.standard.string(forKey: "appLanguage") { return forced.hasPrefix("vi") }
+    return (Locale.preferredLanguages.first ?? "en").hasPrefix("vi")
+}()
+
 func L(_ vi: String, _ en: String) -> String {
-    (Locale.preferredLanguages.first ?? "en").hasPrefix("vi") ? vi : en
+    appIsVietnamese ? vi : en
 }
 
 // MARK: - Cài đặt

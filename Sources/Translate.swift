@@ -116,13 +116,13 @@ struct TargetLanguage: Identifiable, Hashable {
     var id: String { code }
 
     static let all: [TargetLanguage] = [
-        .init(code: "auto", name: "Tự động: Việt ⇄ Anh"),
+        .init(code: "auto", name: L("Tự động: Việt ⇄ Anh", "Auto: Vietnamese ⇄ English")),
         .init(code: "vi", name: "Tiếng Việt"),
         .init(code: "en", name: "English"),
         .init(code: "ja", name: "日本語"),
         .init(code: "ko", name: "한국어"),
-        .init(code: "zh-Hans", name: "中文 (giản thể)"),
-        .init(code: "zh-Hant", name: "中文 (phồn thể)"),
+        .init(code: "zh-Hans", name: L("中文 (giản thể)", "中文 (简体)")),
+        .init(code: "zh-Hant", name: L("中文 (phồn thể)", "中文 (繁體)")),
         .init(code: "fr", name: "Français"),
         .init(code: "de", name: "Deutsch"),
         .init(code: "es", name: "Español"),
@@ -131,7 +131,7 @@ struct TargetLanguage: Identifiable, Hashable {
     ]
 
     static func name(_ code: String?) -> String {
-        guard let code else { return "Tự nhận" }
+        guard let code else { return L("Tự nhận", "Detect") }
         if let t = all.first(where: { $0.code == code }), code != "auto" { return t.name }
         return Locale(identifier: "vi").localizedString(forIdentifier: code)?.capitalized ?? code
     }
@@ -221,7 +221,7 @@ final class TranslateModel: ObservableObject {
         replace = .none
         input = ""
         output = ""
-        status = "Chưa thấy chữ đang bôi đen. Bôi đen chữ rồi bấm lại, hoặc gõ / dán chữ vào ô bên trái."
+        status = L("Chưa thấy chữ đang bôi đen. Bôi đen chữ rồi bấm lại, hoặc gõ / dán chữ vào ô bên trái.", "No selected text found. Select text and press again, or type / paste into the box on the left.")
     }
 
     private func begin(_ text: String) {
@@ -248,14 +248,14 @@ final class TranslateModel: ObservableObject {
         }
         if detected == targetCode {
             output = text
-            status = "Đoạn này đã là \(TargetLanguage.name(targetCode)), chọn ngôn ngữ khác ở trên nếu muốn."
+            status = L("Đoạn này đã là \(TargetLanguage.name(targetCode)), chọn ngôn ngữ khác ở trên nếu muốn.", "This is already \(TargetLanguage.name(targetCode)); pick another language above if you like.")
             return
         }
         output = ""
         status = nil
         showLanguageHelp = false
         guard Self.engineAvailable else {
-            status = "Bộ dịch có sẵn của Mac cần macOS 15 trở lên. Bấm Mở Google Dịch để dịch đoạn này."
+            status = L("Bộ dịch có sẵn của Mac cần macOS 15 trở lên. Bấm Mở Google Dịch để dịch đoạn này.", "The Mac\'s built-in translator needs macOS 15 or later. Click Open Google Translate to translate this.")
             return
         }
         busy = true
@@ -284,8 +284,8 @@ final class TranslateModel: ObservableObject {
 
     func copyOutput() {
         guard !output.isEmpty else { return }
-        ClipboardWatcher.shared?.copyText(output, source: "RinNotch · Dịch nhanh")
-        status = "Đã chép bản dịch"
+        ClipboardWatcher.shared?.copyText(output, source: L("RinNotch · Dịch nhanh", "RinNotch · Quick Translate"))
+        status = L("Đã chép bản dịch", "Translation copied")
     }
 
     func replaceSelection() {
@@ -316,7 +316,7 @@ final class TranslateModel: ObservableObject {
             // Tai thỏ còn giữ phím thì ⌘V sẽ rơi vào RinNotch: thôi, để bản dịch trong bộ nhớ tạm cho người dùng tự dán.
             if MainActor.assumeIsolated({ AppDelegate.shared?.controller.panel.isKeyWindow ?? false }) {
                 MainActor.assumeIsolated {
-                    ClipboardWatcher.shared?.copyText(TranslateModel.shared.output, source: "RinNotch · Dịch nhanh")
+                    ClipboardWatcher.shared?.copyText(TranslateModel.shared.output, source: L("RinNotch · Dịch nhanh", "RinNotch · Quick Translate"))
                 }
                 return
             }
@@ -380,13 +380,13 @@ struct TranslationRunner: View {
                 case .supported:
                     await MainActor.run {
                         guard t.requestID == rid else { return }
-                        t.fail("Máy chưa tải gói \(TargetLanguage.name(t.sourceCode)) → \(TargetLanguage.name(t.targetCode)). Tải ở Cài đặt hệ thống → Chung → Ngôn ngữ & Vùng → Ngôn ngữ dịch, xong bấm Dịch.", languageHelp: true)
+                        t.fail(L("Máy chưa tải gói \(TargetLanguage.name(t.sourceCode)) → \(TargetLanguage.name(t.targetCode)). Tải ở Cài đặt hệ thống → Chung → Ngôn ngữ & Vùng → Ngôn ngữ dịch, xong bấm Dịch.", "The \(TargetLanguage.name(t.sourceCode)) → \(TargetLanguage.name(t.targetCode)) language pack isn\'t downloaded. Get it in System Settings → General → Language & Region → Translation Languages, then click Translate."), languageHelp: true)
                     }
                     return
                 default:
                     await MainActor.run {
                         guard t.requestID == rid else { return }
-                        t.fail("Bộ dịch của Mac chưa hỗ trợ cặp ngôn ngữ này.")
+                        t.fail(L("Bộ dịch của Mac chưa hỗ trợ cặp ngôn ngữ này.", "The Mac\'s translator doesn\'t support this language pair yet."))
                     }
                     return
                 }
@@ -401,7 +401,7 @@ struct TranslationRunner: View {
                 } catch {
                     await MainActor.run {
                         guard t.requestID == rid else { return }
-                        t.fail("Chưa dịch được. Thử lại, hoặc kiểm gói ngôn ngữ ở Cài đặt hệ thống → Chung → Ngôn ngữ & Vùng → Ngôn ngữ dịch.", languageHelp: true)
+                        t.fail(L("Chưa dịch được. Thử lại, hoặc kiểm gói ngôn ngữ ở Cài đặt hệ thống → Chung → Ngôn ngữ & Vùng → Ngôn ngữ dịch.", "Couldn\'t translate. Try again, or check the language packs in System Settings → General → Language & Region → Translation Languages."), languageHelp: true)
                     }
                 }
             }
@@ -454,25 +454,25 @@ struct TranslateView: View {
                 .frame(width: 54, height: 54)
                 .background(Circle().fill(Color.orange.opacity(0.15)))
             VStack(alignment: .leading, spacing: 5) {
-                Text("Cần quyền Trợ năng để đọc chữ bạn đang bôi đen")
+                Text(L("Cần quyền Trợ năng để đọc chữ bạn đang bôi đen", "Needs Accessibility access to read the text you selected"))
                     .font(.system(size: 14, weight: .semibold))
-                Text("Cài đặt hệ thống → Quyền riêng tư & Bảo mật → Trợ năng → bật RinNotch. Bật xong bôi đen chữ rồi bấm lại phím Dịch nhanh.")
+                Text(L("Cài đặt hệ thống → Quyền riêng tư & Bảo mật → Trợ năng → bật RinNotch. Bật xong bôi đen chữ rồi bấm lại phím Dịch nhanh.", "System Settings → Privacy & Security → Accessibility → turn on RinNotch. Then select text and press the Quick Translate shortcut again."))
                     .font(.system(size: 11.5)).foregroundStyle(.white.opacity(0.6))
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 8) {
-                    Button("Mở Cài đặt Trợ năng") {
+                    Button(L("Mở Cài đặt Trợ năng", "Open Accessibility Settings")) {
                         AppDelegate.shared?.controller.collapse()
                         // Gọi xin quyền một lần để RinNotch có tên trong danh sách Trợ năng.
                         Access.prompt()
                         Access.openSettings()
                     }
                     .buttonStyle(PillButton(prominent: true))
-                    Button("Đã bật rồi") {
+                    Button(L("Đã bật rồi", "Already on")) {
                         trusted = Access.trusted
                         if trusted { t.needsPermission = false }
                     }
                     .buttonStyle(PillButton())
-                    Button("Tự gõ chữ để dịch") { t.needsPermission = false }
+                    Button(L("Tự gõ chữ để dịch", "Type text to translate")) { t.needsPermission = false }
                         .buttonStyle(PillButton())
                 }
                 .padding(.top, 4)
@@ -487,7 +487,7 @@ struct TranslateView: View {
         VStack(spacing: 8) {
             HStack(alignment: .top, spacing: 10) {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(t.sourceCode.map { TargetLanguage.name($0) } ?? "Chữ gốc")
+                    Text(t.sourceCode.map { TargetLanguage.name($0) } ?? L("Chữ gốc", "Original"))
                         .font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.5))
                     ZStack(alignment: .topLeading) {
                         TextEditor(text: $t.input)
@@ -500,7 +500,7 @@ struct TranslateView: View {
                                 return .handled
                             }
                         if t.input.isEmpty {
-                            Text("Gõ hoặc dán chữ vào đây · ⌘ Enter để dịch")
+                            Text(L("Gõ hoặc dán chữ vào đây · ⌘ Enter để dịch", "Type or paste text here · ⌘ Enter to translate"))
                                 .font(.system(size: 12.5)).foregroundStyle(.white.opacity(0.35))
                                 .padding(.horizontal, 10).padding(.vertical, 5)
                                 .allowsHitTesting(false)
@@ -531,7 +531,7 @@ struct TranslateView: View {
                         if t.busy {
                             HStack(spacing: 6) {
                                 ProgressView().controlSize(.small)
-                                Text("Đang dịch…").font(.system(size: 12)).foregroundStyle(.white.opacity(0.6))
+                                Text(L("Đang dịch…", "Translating…")).font(.system(size: 12)).foregroundStyle(.white.opacity(0.6))
                             }
                             .padding(10)
                         }
@@ -542,20 +542,20 @@ struct TranslateView: View {
             }
             .frame(maxHeight: .infinity)
             HStack(spacing: 8) {
-                Text(t.status ?? (t.canReplace ? "Thay chỗ chọn: đưa bản dịch vào đúng chỗ bạn vừa bôi đen" : "Dịch trên máy bằng bộ dịch của macOS"))
+                Text(t.status ?? (t.canReplace ? L("Thay chỗ chọn: đưa bản dịch vào đúng chỗ bạn vừa bôi đen", "Replace selection: put the translation where you selected the text") : L("Dịch trên máy bằng bộ dịch của macOS", "Translated on-device by macOS")))
                     .font(.system(size: 11)).foregroundStyle(.white.opacity(0.55)).lineLimit(2)
                 Spacer(minLength: 4)
                 if t.showLanguageHelp {
-                    Button("Ngôn ngữ dịch") { TranslateModel.openLanguageSettings() }.buttonStyle(PillButton())
+                    Button(L("Ngôn ngữ dịch", "Target language")) { TranslateModel.openLanguageSettings() }.buttonStyle(PillButton())
                 }
                 if !TranslateModel.engineAvailable {
-                    Button("Mở Google Dịch") { t.openGoogle() }.buttonStyle(PillButton(prominent: true))
+                    Button(L("Mở Google Dịch", "Open Google Translate")) { t.openGoogle() }.buttonStyle(PillButton(prominent: true))
                 } else {
-                    Button("Dịch") { t.translate() }.buttonStyle(PillButton())
+                    Button(L("Dịch", "Translate")) { t.translate() }.buttonStyle(PillButton())
                 }
-                Button("Sao chép") { t.copyOutput() }.buttonStyle(PillButton()).disabled(t.output.isEmpty)
+                Button(L("Sao chép", "Copy")) { t.copyOutput() }.buttonStyle(PillButton()).disabled(t.output.isEmpty)
                 if t.canReplace {
-                    Button("Thay chỗ chọn") { t.replaceSelection() }.buttonStyle(PillButton(prominent: true))
+                    Button(L("Thay chỗ chọn", "Replace selection")) { t.replaceSelection() }.buttonStyle(PillButton(prominent: true))
                 }
                 if !LibraryWindow.shared.isFrontmost {
                     Button {
@@ -568,7 +568,7 @@ struct TranslateView: View {
                             .contentShape(Circle())
                     }
                     .buttonStyle(HoverPlain())
-                    .help("Mở bảng lớn")
+                    .help(L("Mở bảng lớn", "Open Big Board"))
                 }
             }
         }

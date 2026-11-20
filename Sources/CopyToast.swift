@@ -175,13 +175,13 @@ struct CopyPill: View {
             preview
             if hovering {
                 HStack(spacing: 4) {
-                    action(pinned ? "pin.slash" : "pin", pinned ? "Bỏ ghim" : "Ghim") { t.pin() }
-                    if item.text != nil { action("character.bubble", "Dịch") { t.translate() } }
-                    action("trash", "Xoá") { t.delete() }
+                    action(pinned ? "pin.slash" : "pin", pinned ? L("Bỏ ghim", "Unpin") : "Ghim") { t.pin() }
+                    if item.text != nil { action("character.bubble", L("Dịch", "Translate")) { t.translate() } }
+                    action("trash", L("Xoá", "Delete")) { t.delete() }
                 }
                 .transition(.opacity.combined(with: .scale(scale: 0.8, anchor: .leading)))
             } else {
-                Text(stackIndex.map { "Thêm #\($0)" } ?? "Đã chép")
+                Text(stackIndex.map { L("Thêm #\($0)", "Added #\($0)") } ?? L("Đã chép", "Copied"))
                     .font(.system(size: 11, weight: .semibold))
                     .monospacedDigit()
                     .foregroundStyle(accent)

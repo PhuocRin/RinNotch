@@ -20,13 +20,13 @@ enum ShelfOp: Hashable, Sendable {
     var title: String {
         switch self {
         case .convert(let t):
-            return "Đổi sang " + (t == UTType.jpeg.identifier ? "JPG" : t == UTType.png.identifier ? "PNG" : "HEIC")
-        case .compress: return "Nén ảnh (giảm dung lượng)"
-        case .resize(let px): return "Thu nhỏ còn \(px) px"
-        case .half: return "Thu nhỏ một nửa"
-        case .removeBackground: return "Xoá nền (ra PNG trong suốt)"
-        case .pdf: return "Gộp thành một file PDF"
-        case .zip: return "Nén ZIP"
+            return L("Đổi sang ", "Convert to ") + (t == UTType.jpeg.identifier ? "JPG" : t == UTType.png.identifier ? "PNG" : "HEIC")
+        case .compress: return L("Nén ảnh (giảm dung lượng)", "Compress images (smaller size)")
+        case .resize(let px): return L("Thu nhỏ còn \(px) px", "Resize to \(px) px")
+        case .half: return L("Thu nhỏ một nửa", "Resize to half")
+        case .removeBackground: return L("Xoá nền (ra PNG trong suốt)", "Remove background (transparent PNG)")
+        case .pdf: return L("Gộp thành một file PDF", "Combine into one PDF")
+        case .zip: return L("Nén ZIP", "Compress to ZIP")
         }
     }
 
@@ -47,7 +47,7 @@ enum ShelfTools {
     static func run(_ op: ShelfOp, on urls: [URL], m: NotchModel) {
         let files = urls.filter { FileManager.default.fileExists(atPath: $0.path) }
         guard !files.isEmpty else { return }
-        m.shelfStatus = "Đang xử lý…"
+        m.shelfStatus = L("Đang xử lý…", "Processing…")
         m.shelfBusy = true
         Task.detached(priority: .userInitiated) {
             let r = ShelfTools.work(op, files)
@@ -87,7 +87,7 @@ enum ShelfTools {
         default: break
         }
         let images = files.filter(isImage)
-        guard !images.isEmpty else { return ([], "Không có ảnh nào để xử lý") }
+        guard !images.isEmpty else { return ([], L("Không có ảnh nào để xử lý", "No images to process")) }
         var outs: [URL] = []
         var failed = 0
         var before: Int64 = 0, after: Int64 = 0
@@ -104,21 +104,24 @@ enum ShelfTools {
             }
         }
         let n = outs.count
-        let fail = failed > 0 ? " · \(failed) ảnh không làm được" : ""
+        let fail = failed > 0 ? L(" · \(failed) ảnh không làm được", " · \(failed) images failed") : ""
         guard n > 0 else {
-            if op == .removeBackground { return ([], "Không tìm thấy chủ thể để tách nền, hoặc máy này chưa hỗ trợ") }
-            return ([], "Không xử lý được ảnh nào")
+            if op == .removeBackground { return ([], L("Không tìm thấy chủ thể để tách nền, hoặc máy này chưa hỗ trợ", "No subject found to remove the background, or this Mac doesn\'t support it")) }
+            return ([], L("Không xử lý được ảnh nào", "Couldn\'t process any images"))
         }
         let size = ByteCountFormatter.string(fromByteCount: before, countStyle: .file) + " → "
             + ByteCountFormatter.string(fromByteCount: after, countStyle: .file)
         switch op {
-        case .convert: return (outs, "\(op.title.replacingOccurrences(of: "Đổi sang", with: "Đã đổi \(n) ảnh sang"))\(fail)")
+        case .convert:
+            // Định dạng là chữ cuối của tên thao tác ("Đổi sang JPG" / "Convert to JPG").
+            let format = op.title.split(separator: " ").last.map(String.init) ?? ""
+            return (outs, L("Đã đổi \(n) ảnh sang \(format)", "Converted \(n) images to \(format)") + fail)
         case .compress:
             let pct = before > 0 ? Int((1 - Double(after) / Double(before)) * 100) : 0
-            return (outs, "Đã nén \(n) ảnh: \(size)" + (pct > 0 ? " (giảm \(pct)%)" : "") + fail)
-        case .resize, .half: return (outs, "Đã thu nhỏ \(n) ảnh: \(size)\(fail)")
-        case .removeBackground: return (outs, "Đã xoá nền \(n) ảnh\(fail)")
-        default: return (outs, "Xong\(fail)")
+            return (outs, L("Đã nén \(n) ảnh: \(size)", "Compressed \(n) images: \(size)") + (pct > 0 ? L(" (giảm \(pct)%)", " (\(pct)% smaller)") : "") + fail)
+        case .resize, .half: return (outs, L("Đã thu nhỏ \(n) ảnh: \(size)\(fail)", "Resized \(n) images: \(size)\(fail)"))
+        case .removeBackground: return (outs, L("Đã xoá nền \(n) ảnh\(fail)", "Removed background from \(n) images\(fail)"))
+        default: return (outs, L("Xong", "Done") + fail)
         }
     }
 
@@ -250,13 +253,13 @@ enum ShelfTools {
                 }
             }
         }
-        guard count > 0, let first = files.first(where: { isImage($0) || isPDF($0) }) else { return ([], "Không có ảnh hoặc PDF nào để gộp") }
+        guard count > 0, let first = files.first(where: { isImage($0) || isPDF($0) }) else { return ([], L("Không có ảnh hoặc PDF nào để gộp", "No images or PDFs to combine")) }
         let df = DateFormatter()
         df.dateFormat = "yyyy-MM-dd HH.mm"
         let name = files.count == 1 ? first.deletingPathExtension().lastPathComponent : "RinNotch \(df.string(from: Date()))"
         let out = outputURL(for: first.deletingLastPathComponent().appendingPathComponent(name + ".pdf"), suffix: "", ext: "pdf")
-        guard doc.write(to: out) else { return ([], "Không ghi được file PDF") }
-        return ([out], "Đã tạo PDF \(count) trang · \(ByteCountFormatter.string(fromByteCount: fileSize(out), countStyle: .file))")
+        guard doc.write(to: out) else { return ([], L("Không ghi được file PDF", "Couldn\'t write the PDF")) }
+        return ([out], L("Đã tạo PDF \(count) trang · \(ByteCountFormatter.string(fromByteCount: fileSize(out), countStyle: .file))", "Created a \(count)-page PDF · \(ByteCountFormatter.string(fromByteCount: fileSize(out), countStyle: .file))"))
     }
 
     // MARK: ZIP
@@ -274,7 +277,7 @@ enum ShelfTools {
         let names = files.map(\.lastPathComponent)
         if Set(names).count != names.count {
             let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("rinnotch-zip-\(UUID().uuidString)")
-            do { try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true) } catch { return ([], "Không nén được") }
+            do { try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true) } catch { return ([], L("Không nén được", "Couldn\'t compress")) }
             staging = tmp
             var used = Set<String>()
             var links: [URL] = []
@@ -289,7 +292,7 @@ enum ShelfTools {
                 }
                 used.insert(name)
                 let link = tmp.appendingPathComponent(name)
-                do { try FileManager.default.createSymbolicLink(at: link, withDestinationURL: f) } catch { return ([], "Không nén được") }
+                do { try FileManager.default.createSymbolicLink(at: link, withDestinationURL: f) } catch { return ([], L("Không nén được", "Couldn\'t compress")) }
                 links.append(link)
             }
             groups = [(tmp.path, links)]
@@ -304,15 +307,15 @@ enum ShelfTools {
                 + ["-x", "*.DS_Store", "-x", "*/__MACOSX/*"]
             p.standardOutput = FileHandle.nullDevice
             p.standardError = FileHandle.nullDevice
-            do { try p.run() } catch { return ([], "Không nén được") }
+            do { try p.run() } catch { return ([], L("Không nén được", "Couldn\'t compress")) }
             p.waitUntilExit()
             if p.terminationStatus != 0 {
                 try? FileManager.default.removeItem(at: out)
-                return ([], "Không nén được (lỗi \(p.terminationStatus))")
+                return ([], L("Không nén được (lỗi \(p.terminationStatus))", "Couldn\'t compress (error \(p.terminationStatus))"))
             }
         }
         let size = ByteCountFormatter.string(fromByteCount: fileSize(out), countStyle: .file)
-        return ([out], "Đã nén ZIP \(files.count) mục · \(size)")
+        return ([out], L("Đã nén ZIP \(files.count) mục · \(size)", "Zipped \(files.count) items · \(size)"))
     }
 
     // MARK: Tiện ích

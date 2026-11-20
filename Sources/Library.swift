@@ -12,12 +12,12 @@ enum ShelfKind: String, CaseIterable {
 
     var title: String {
         switch self {
-        case .image: return "Ảnh"
+        case .image: return L("Ảnh", "Image")
         case .video: return "Video"
         case .pdf: return "PDF"
-        case .doc: return "Tài liệu"
-        case .folder: return "Thư mục"
-        case .other: return "Khác"
+        case .doc: return L("Tài liệu", "Documents")
+        case .folder: return L("Thư mục", "Folders")
+        case .other: return L("Khác", "Other")
         }
     }
 
@@ -58,7 +58,7 @@ struct ShelfChips: View {
 
     var body: some View {
         let kinds = Dictionary(grouping: m.shelf) { FileInfo.info($0).kind }.mapValues(\.count)
-        chip("Tất cả", symbol: "square.grid.2x2", count: m.shelf.count, on: m.shelfKind == nil) { m.shelfKind = nil }
+        chip(L("Tất cả", "All"), symbol: "square.grid.2x2", count: m.shelf.count, on: m.shelfKind == nil) { m.shelfKind = nil }
         ForEach(ShelfKind.allCases, id: \.self) { k in
             if let n = kinds[k], n > 0, kinds.count > 1 {
                 chip(k.title, symbol: k.symbol, count: n, on: m.shelfKind == k) {
@@ -125,13 +125,13 @@ struct FileCardThumb: View {
 @MainActor
 enum ShelfRename {
     static func run(_ u: URL, m: NotchModel) {
-        guard let name = Prompt.text(title: "Đổi tên file", message: "File gốc trong Finder cũng được đổi tên.",
-                                     value: u.lastPathComponent, ok: "Đổi tên", selectBaseName: true) else { return }
+        guard let name = Prompt.text(title: L("Đổi tên file", "Rename file"), message: L("File gốc trong Finder cũng được đổi tên.", "The original file in Finder is renamed too."),
+                                     value: u.lastPathComponent, ok: L("Đổi tên", "Rename"), selectBaseName: true) else { return }
         let clean = name.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "/", with: "-")
         guard !clean.isEmpty, clean != u.lastPathComponent else { return }
         let dest = u.deletingLastPathComponent().appendingPathComponent(clean)
         if FileManager.default.fileExists(atPath: dest.path) {
-            m.flashShelfStatus("Đã có file tên \"\(clean)\" trong thư mục đó")
+            m.flashShelfStatus(L("Đã có file tên \"\(clean)\" trong thư mục đó", "A file named \"\(clean)\" already exists in that folder"))
             return
         }
         do {
@@ -140,9 +140,9 @@ enum ShelfRename {
             if m.shelfSelection.remove(u) != nil { m.shelfSelection.insert(dest) }
             if m.shelfAnchor == u { m.shelfAnchor = dest }
             m.saveShelfNow()
-            m.flashShelfStatus("Đã đổi tên thành \(clean)")
+            m.flashShelfStatus(L("Đã đổi tên thành \(clean)", "Renamed to \(clean)"))
         } catch {
-            m.flashShelfStatus("Không đổi tên được: \(error.localizedDescription)")
+            m.flashShelfStatus(L("Không đổi tên được: \(error.localizedDescription)", "Couldn\'t rename: \(error.localizedDescription)"))
         }
     }
 }
@@ -246,8 +246,8 @@ enum FileInfo {
 
     static func size(_ u: URL) -> String {
         var isDir: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: u.path, isDirectory: &isDir) else { return "Không còn" }
-        if isDir.boolValue { return "Thư mục" }
+        guard FileManager.default.fileExists(atPath: u.path, isDirectory: &isDir) else { return L("Không còn", "Missing") }
+        if isDir.boolValue { return L("Thư mục", "Folders") }
         let n = (try? FileManager.default.attributesOfItem(atPath: u.path)[.size] as? Int64) ?? 0
         return ByteCountFormatter.string(fromByteCount: n, countStyle: .file)
     }
@@ -259,10 +259,10 @@ enum LibraryTab: String, CaseIterable {
     case clipboard, shelf, notes, translate
     var title: String {
         switch self {
-        case .clipboard: return "Bộ nhớ tạm"
-        case .shelf: return "Kệ file"
-        case .notes: return "Ghi chú"
-        case .translate: return "Dịch"
+        case .clipboard: return L("Bộ nhớ tạm", "Clipboard")
+        case .shelf: return L("Kệ file", "Shelf")
+        case .notes: return L("Ghi chú", "Notes")
+        case .translate: return L("Dịch", "Translate")
         }
     }
     var symbol: String {
@@ -361,10 +361,10 @@ struct LibraryView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "magnifyingglass").foregroundStyle(.white.opacity(0.6))
                         if m.libraryTab == .clipboard {
-                            TextField("", text: $m.clipSearch, prompt: Text("Tìm, không cần dấu · @link @code @tên-app").foregroundColor(.white.opacity(0.4)))
+                            TextField("", text: $m.clipSearch, prompt: Text(L("Tìm, không cần dấu · @link @code @tên-app", "Search · @link @code @app-name")).foregroundColor(.white.opacity(0.4)))
                                 .textFieldStyle(.plain)
                         } else {
-                            TextField("", text: $shelfSearch, prompt: Text("Tìm tên file").foregroundColor(.white.opacity(0.4)))
+                            TextField("", text: $shelfSearch, prompt: Text(L("Tìm tên file", "Search file names")).foregroundColor(.white.opacity(0.4)))
                                 .textFieldStyle(.plain)
                         }
                     }
@@ -431,7 +431,7 @@ struct LibraryView: View {
             if m.clipFilter == .vault && !m.privateUnlocked {
                 VaultLockedView(m: m, cardW: 186, cardH: 146, large: true)
             } else if items.isEmpty {
-                empty(symbol: "doc.on.clipboard", text: m.clips.isEmpty && m.pins.isEmpty ? "Copy gì đó, nó sẽ hiện ở đây" : "Không có mục nào khớp")
+                empty(symbol: "doc.on.clipboard", text: m.clips.isEmpty && m.pins.isEmpty ? L("Copy gì đó, nó sẽ hiện ở đây", "Copy something and it will show up here") : L("Không có mục nào khớp", "No matching items"))
             } else {
                 GeometryReader { geo in
                     ScrollView {
@@ -456,7 +456,7 @@ struct LibraryView: View {
         let files = m.visibleShelf.filter { q.isEmpty || ClipParse.fold($0.lastPathComponent).contains(q) }
         return Group {
             if files.isEmpty {
-                empty(symbol: "tray.and.arrow.down", text: m.shelf.isEmpty ? "Kéo file thả vào đây hoặc lên tai thỏ" : "Không có file nào khớp")
+                empty(symbol: "tray.and.arrow.down", text: m.shelf.isEmpty ? L("Kéo file thả vào đây hoặc lên tai thỏ", "Drop files here or onto the notch") : L("Không có file nào khớp", "No matching files"))
             } else {
                 GeometryReader { geo in
                     ScrollView {
@@ -488,31 +488,31 @@ struct LibraryView: View {
     @ViewBuilder private var bottomBar: some View {
         HStack(spacing: 8) {
             if m.libraryTab == .clipboard {
-                Text("Bấm thẻ để chép · chuột phải: ghim, sửa chữ, mã màu, dịch · ghim giữ lại khi tắt app")
+                Text(L("Bấm thẻ để chép · chuột phải: ghim, sửa chữ, mã màu, dịch · ghim giữ lại khi tắt app", "Click a card to copy · right-click: pin, edit text, color codes, translate · pins stay after quitting"))
                     .font(.system(size: 11)).foregroundStyle(.white.opacity(0.5)).lineLimit(1)
                 Spacer()
                 if !m.clips.isEmpty {
-                    Button("Xoá lịch sử") { ClipboardWatcher.shared?.clearHistory() }.buttonStyle(PillButton())
+                    Button(L("Xoá lịch sử", "Clear history")) { ClipboardWatcher.shared?.clearHistory() }.buttonStyle(PillButton())
                 }
             } else {
                 let sel = m.selectedShelf
                 let targets = sel.isEmpty ? m.visibleShelf : sel
                 if m.shelfBusy { ProgressView().controlSize(.mini) }
-                Text(m.shelfStatus ?? (sel.isEmpty ? "Bấm để chọn, ⌘ + bấm chọn thêm · kéo thẻ ra ngoài = sao chép, giữ ⌘ = chuyển"
-                                                    : "Đã chọn \(sel.count) file"))
+                Text(m.shelfStatus ?? (sel.isEmpty ? L("Bấm để chọn, ⌘ + bấm chọn thêm · kéo thẻ ra ngoài = sao chép, giữ ⌘ = chuyển", "Click to select, ⌘-click to add · drag a card out = copy, hold ⌘ = move")
+                                                    : L("Đã chọn \(sel.count) file", "\(sel.count) files selected")))
                     .font(.system(size: 11))
                     .foregroundStyle(m.shelfStatus != nil ? Color.green.opacity(0.9) : .white.opacity(0.5))
                     .lineLimit(1)
                 Spacer()
                 if !targets.isEmpty {
                     Button("AirDrop") { Actions.airDrop(targets) }.buttonStyle(PillButton(prominent: true))
-                    Button("Sao chép") { Actions.copyFiles(targets) }.buttonStyle(PillButton())
+                    Button(L("Sao chép", "Copy")) { Actions.copyFiles(targets) }.buttonStyle(PillButton())
                     Menu {
                         ForEach(ShelfTools.ops(for: targets), id: \.self) { op in
                             Button(op.title) { ShelfTools.run(op, on: targets, m: m) }
                         }
                     } label: {
-                        Text("Xử lý").font(.system(size: 11, weight: .semibold))
+                        Text(L("Xử lý", "Process")).font(.system(size: 11, weight: .semibold))
                     }
                     .menuStyle(.borderlessButton)
                     .fixedSize()
@@ -520,9 +520,9 @@ struct LibraryView: View {
                     .background(Capsule().fill(Color.white.opacity(0.12)))
                     .disabled(m.shelfBusy)
                     if sel.isEmpty {
-                        Button("Xoá kệ") { m.clearShelf() }.buttonStyle(PillButton())
+                        Button(L("Xoá kệ", "Clear Shelf")) { m.clearShelf() }.buttonStyle(PillButton())
                     } else {
-                        Button("Bỏ khỏi kệ") { m.removeFromShelf(sel) }.buttonStyle(PillButton())
+                        Button(L("Bỏ khỏi kệ", "Remove from Shelf")) { m.removeFromShelf(sel) }.buttonStyle(PillButton())
                     }
                 }
             }
@@ -571,7 +571,7 @@ final class LibraryWindow: NSObject, NSWindowDelegate {
             p.titlebarAppearsTransparent = true
             // Hàng tiêu đề riêng như cửa sổ khác: ba nút bên trái, tên ở giữa.
             p.titleVisibility = .visible
-            p.title = "RinNotch · Bảng lớn"
+            p.title = L("RinNotch · Bảng lớn", "RinNotch · Big Board")
             p.delegate = self
             p.isOpaque = false
             p.backgroundColor = .clear
@@ -654,7 +654,7 @@ struct BigNotesView: View {
                             return .handled
                         }
                     if m.noteDraft.isEmpty {
-                        Text("Gõ ý tưởng… Enter để xuống dòng, ⌘ Enter để lưu vào Notes")
+                        Text(L("Gõ ý tưởng… Enter để xuống dòng, ⌘ Enter để lưu vào Notes", "Type an idea… Enter for a new line, ⌘ Enter to save to Notes"))
                             .font(.system(size: 15)).foregroundStyle(.white.opacity(0.35))
                             .padding(.horizontal, 15).padding(.vertical, 10)
                             .allowsHitTesting(false)
@@ -662,16 +662,16 @@ struct BigNotesView: View {
                 }
                 .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.black.opacity(0.25)))
                 HStack {
-                    Text(m.noteStatus ?? "Lưu vào app Ghi chú, thư mục RinNotch")
+                    Text(m.noteStatus ?? L("Lưu vào app Ghi chú, thư mục RinNotch", "Save to the Notes app, RinNotch folder"))
                         .font(.system(size: 12)).foregroundStyle(.white.opacity(0.6)).lineLimit(2)
                     Spacer()
-                    Button("Lưu vào Notes") { NotesSaver.save(m) }
+                    Button(L("Lưu vào Notes", "Save to Notes")) { NotesSaver.save(m) }
                         .buttonStyle(PillButton(prominent: true))
                         .disabled(m.noteDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
             VStack(alignment: .leading, spacing: 8) {
-                Text("Gần đây").font(.system(size: 12, weight: .semibold)).foregroundStyle(.white.opacity(0.55))
+                Text(L("Gần đây", "Recent")).font(.system(size: 12, weight: .semibold)).foregroundStyle(.white.opacity(0.55))
                 ScrollView {
                     VStack(alignment: .leading, spacing: 8) {
                         ForEach(m.notes) { n in
@@ -682,7 +682,7 @@ struct BigNotesView: View {
                                         .foregroundStyle(n.savedToNotes ? Color.green : Color.white.opacity(0.4))
                                     Text(n.date, style: .relative)
                                     Spacer()
-                                    Button("Chép") { ClipboardWatcher.shared?.copyText(n.text, source: "RinNotch · Ghi chú") }
+                                    Button(L("Chép", "Copy")) { ClipboardWatcher.shared?.copyText(n.text, source: L("RinNotch · Ghi chú", "RinNotch · Notes")) }
                                         .buttonStyle(HoverPlain()).foregroundStyle(Color.accentColor)
                                 }
                                 .font(.system(size: 10.5))
@@ -693,7 +693,7 @@ struct BigNotesView: View {
                             .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.white.opacity(0.07)))
                         }
                         if m.notes.isEmpty {
-                            Text("Chưa có ghi chú nào").font(.system(size: 12)).foregroundStyle(.white.opacity(0.45))
+                            Text(L("Chưa có ghi chú nào", "No notes yet")).font(.system(size: 12)).foregroundStyle(.white.opacity(0.45))
                         }
                     }
                 }
