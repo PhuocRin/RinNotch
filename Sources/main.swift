@@ -1934,7 +1934,6 @@ struct ShelfView: View {
                 .frame(height: ShelfItem.height + Self.rowPad * 2)
                 .animation(.spring(response: 0.32, dampingFraction: 0.85), value: list)
                 }
-                .modifier(ShelfMarquee(m: m, space: "shelfArea", state: marquee))
                 HStack(spacing: 8) {
                     if m.shelfBusy {
                         ProgressView().controlSize(.mini)
@@ -1943,6 +1942,8 @@ struct ShelfView: View {
                                      : L("Đã chọn \(sel.count) file · kéo ra là đi cả nhóm", "\(sel.count) files selected · drag out to move them together")))
                         .font(.system(size: 11)).foregroundStyle(m.shelfStatus != nil ? Color.green.opacity(0.9) : .white.opacity(0.55))
                         .lineLimit(1)
+                        // Dòng chữ không nhận chuột để kéo khung bắt đầu được từ đây (Phước yêu cầu 20/11).
+                        .allowsHitTesting(false)
                     Spacer(minLength: 4)
                     let targets = sel.isEmpty ? list : sel
                     Button("AirDrop") { Actions.airDrop(targets) }.buttonStyle(PillButton(prominent: true)).disabled(targets.isEmpty)
@@ -1969,6 +1970,10 @@ struct ShelfView: View {
                     }
                 }
             }
+            // Kéo khung chọn nhiều bắt đầu được ở MỌI chỗ trống của mục Kệ file: hàng nút lọc, khe giữa các hàng,
+            // dải chữ dưới cùng, và cả lề trái / phải / dưới của tai thỏ (Phước yêu cầu 20/11).
+            .modifier(ShelfMarquee(m: m, space: "shelfArea", state: marquee,
+                                   outset: EdgeInsets(top: 0, leading: 18, bottom: 16, trailing: 18)))
         }
     }
 }

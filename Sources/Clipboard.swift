@@ -934,7 +934,9 @@ struct ClipboardView: View {
             }
         }
         // Kéo khung từ chỗ trống phía trên (khe giữa hàng nút và hàng thẻ) cũng chọn được.
-        .modifier(ClipMarquee(m: m, space: "clipArea", state: marquee))
+        // Như Kệ file: kéo khung bắt đầu được cả ở lề tai thỏ quanh nội dung.
+        .modifier(ClipMarquee(m: m, space: "clipArea", state: marquee,
+                              outset: EdgeInsets(top: 0, leading: 18, bottom: 16, trailing: 18)))
         .animation(.spring(response: 0.32, dampingFraction: 0.85), value: items.map(\.id))
         .animation(.spring(response: 0.3, dampingFraction: 0.85), value: m.clipMulti.isEmpty)
     }

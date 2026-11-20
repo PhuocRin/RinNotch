@@ -26,12 +26,16 @@ struct ClipMarquee: ViewModifier {
     let space: String
     @ObservedObject var state: ClipMarqueeState
     var root = true
+    /// Nới vùng bắt kéo khung ra ngoài khung của view (lề của tai thỏ quanh nội dung), để kéo từ sát mép cũng được.
+    var outset = EdgeInsets()
 
     func body(content: Content) -> some View {
         let caught = content.background(
             Color.white.opacity(0.001)
                 .contentShape(Rectangle())
                 .gesture(drag)
+                .padding(EdgeInsets(top: -outset.top, leading: -outset.leading,
+                                    bottom: -outset.bottom, trailing: -outset.trailing))
         )
         if root {
             caught
