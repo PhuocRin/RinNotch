@@ -26,7 +26,7 @@ Trang tải và hướng dẫn cài có hình: https://phuocrin.com/rinnotch/
 - **App toàn màn hình**: tai thỏ tự ẩn cho khỏi che thanh địa chỉ, nội dung (cả máy có tai thỏ lẫn không). Rê chuột lên giữa mép trên rồi dừng một chút là mở, kéo file lên đó là mở Kệ file, phím tắt vẫn dùng được. Tắt trong Cài đặt nếu không cần.
 - **Phím tắt**: ⌃⇧1 → ⌃⇧9 mở thẳng Nhạc, Kệ file, Bộ nhớ tạm, Ghi chú, Hẹn giờ, Hệ thống, Công cụ, Dịch nhanh, Cửa sổ (bấm lại để đóng). Tai thỏ đang mở thì bấm số 1–9 để chuyển mục. ⌃⇧0 mở bảng lớn chứa hết Bộ nhớ tạm và Kệ file. ⌥⌘N ẩn / hiện, Esc thu lại. Đổi hoặc tắt từng phím trong Cài đặt. Bộ ⌃⇧ + số được chọn vì không trùng phím của Final Cut Pro, Finder và phím mặc định của macOS.
 - **Cài đặt**: cách mở tai thỏ (rê chuột, phím tắt hoặc cả hai), bật / tắt từng loại hiển thị, chọn mục mở khi rê chuột, mở cùng máy.
-- **Mẹo dùng**: tự mở một lần khi cài, mở lại từ thanh menu → Mẹo dùng hoặc nút ? trên tai thỏ (mở đúng mục đang xem).
+- **Chào mừng và Mẹo dùng**: cài mới thì cửa sổ Chào mừng tự mở một lần (cách mở tai thỏ, nút Xem mẹo dùng, Ủng hộ tác giả, kênh YouTube / Facebook / TikTok, tặng sao GitHub). Mở lại từ thanh menu → Chào mừng / Mẹo dùng, hoặc nút ? trên tai thỏ (mở đúng mục đang xem).
 - Tự cập nhật (gói cập nhật được ký số, kiểm tra trước khi cài), Báo lỗi kèm nhật ký, Ủng hộ tác giả.
 
 Cần macOS 14 trở lên, Mac chip Apple và Intel. Máy không có tai thỏ vẫn dùng được: rê chuột lên giữa cạnh trên màn hình.
