@@ -4822,16 +4822,28 @@ struct AboutView: View {
 
 // MARK: - Chào mừng (cài mới)
 
-/// Tự mở MỘT lần khi cài mới (Phước yêu cầu 27/11): chào, chỉ cách mở, rồi mời ủng hộ / theo dõi / gắn sao.
-/// Không tự hiện lại; mở lại được từ thanh menu → Chào mừng.
+/// Tự mở MỘT lần (Phước yêu cầu 27/11): cài mới, và người đang dùng bản cũ khi lên bản có cửa sổ này.
+/// Chào, chỉ cách mở, rồi mời ủng hộ / theo dõi / gắn sao. Không tự hiện lại; mở lại từ thanh menu → Chào mừng.
+@MainActor
+enum Welcome {
+    /// Người đang dùng bản cũ (đã từng thấy Mẹo dùng), không phải cài mới.
+    static var isUpdate = false
+    /// Vừa tự cập nhật xong: có ghi chú phát hành để mở bằng nút "Có gì mới".
+    static var hasNotes = false
+}
+
 struct WelcomeView: View {
     var body: some View {
         VStack(spacing: 12) {
             AppIconView(size: 84)
-            Text(L("Chào mừng bạn đến với RinNotch", "Welcome to RinNotch"))
+            Text(Welcome.isUpdate ? L("Cảm ơn bạn đã dùng RinNotch", "Thanks for using RinNotch")
+                                  : L("Chào mừng bạn đến với RinNotch", "Welcome to RinNotch"))
                 .font(.system(size: 22, weight: .bold, design: .rounded)).multilineTextAlignment(.center)
-            Text(L("Cảm ơn bạn đã cài app. RinNotch miễn phí, do Phước Rin tự làm.",
-                   "Thanks for installing. RinNotch is free, made by Phước Rin."))
+            Text(Welcome.isUpdate
+                 ? L("Bạn đang dùng RinNotch \(AppInfo.version). App vẫn miễn phí, do Phước Rin tự làm.",
+                     "You're on RinNotch \(AppInfo.version). It's still free, made by Phước Rin.")
+                 : L("Cảm ơn bạn đã cài app. RinNotch miễn phí, do Phước Rin tự làm.",
+                     "Thanks for installing. RinNotch is free, made by Phước Rin."))
                 .font(.system(size: 13)).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -4841,14 +4853,26 @@ struct WelcomeView: View {
                 step("keyboard", L("Hoặc bấm ⌃⇧1 → ⌃⇧9 để mở thẳng từng mục.", "Or press ⌃⇧1 → ⌃⇧9 to jump straight to a section."))
                 step("menubar.rectangle", L("Cài đặt, Mẹo dùng và Kiểm tra cập nhật nằm ở biểu tượng RinNotch trên thanh menu.",
                                             "Settings, Tips and Check for Updates live in the RinNotch menu bar icon."))
-                Button {
-                    AppDelegate.shared?.welcomePanel.close()
-                    AppDelegate.shared?.showTips(.start, attention: true)
-                } label: {
-                    Label(L("Xem mẹo dùng", "See the tips"), systemImage: "lightbulb.fill")
-                        .font(.system(size: 13, weight: .semibold)).frame(maxWidth: .infinity).padding(.vertical, 3)
+                HStack(spacing: 10) {
+                    Button {
+                        AppDelegate.shared?.welcomePanel.close()
+                        AppDelegate.shared?.showTips(.start, attention: true)
+                    } label: {
+                        Label(L("Xem mẹo dùng", "See the tips"), systemImage: "lightbulb.fill")
+                            .font(.system(size: 13, weight: .semibold)).frame(maxWidth: .infinity).padding(.vertical, 3)
+                    }
+                    .glassButton(prominent: true).controlSize(.large)
+                    if Welcome.hasNotes {
+                        Button {
+                            AppDelegate.shared?.welcomePanel.close()
+                            AppDelegate.shared?.updatePanel.show(attention: true)
+                        } label: {
+                            Label(L("Có gì mới", "What's new"), systemImage: "sparkles")
+                                .font(.system(size: 13, weight: .semibold)).frame(maxWidth: .infinity).padding(.vertical, 3)
+                        }
+                        .glassButton().controlSize(.large)
+                    }
                 }
-                .glassButton(prominent: true).controlSize(.large)
             }
             .padding(16).frame(maxWidth: .infinity, alignment: .leading).softCard()
 
@@ -5572,10 +5596,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         updater.onInstallFailed = { [weak self] in self?.updatePanel.show(attention: true) }
         let justUpdated = updater.noteJustUpdated()
-        // Cài mới (chưa từng mở Mẹo dùng): mở cửa sổ Chào mừng một lần, trong đó có nút Xem mẹo dùng.
-        // Lúc đó không mở thêm cửa sổ Cập nhật. Người đang dùng bản cũ đã thấy Mẹo dùng nên không hiện Chào mừng.
+        // Cửa sổ Chào mừng tự mở MỘT lần: cài mới (chưa từng mở Mẹo dùng), hoặc người đang dùng bản cũ lên bản
+        // có cửa sổ này (Phước chốt 27/11). Lần đó không mở thêm cửa sổ Cập nhật: vừa tự cập nhật thì Chào mừng
+        // có nút "Có gì mới" mở ghi chú phát hành. Cài đè bằng .dmg (không qua tự cập nhật) thì không có nút đó.
         let d = UserDefaults.standard
-        if !d.bool(forKey: "tipsShown") {
+        if !d.bool(forKey: "tipsShown") || !d.bool(forKey: "welcomeShown") {
+            Welcome.isUpdate = d.bool(forKey: "tipsShown")
+            Welcome.hasNotes = justUpdated
             d.set(true, forKey: "tipsShown")
             d.set(true, forKey: "welcomeShown")
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
