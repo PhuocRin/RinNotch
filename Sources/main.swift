@@ -5227,15 +5227,55 @@ final class Updater: ObservableObject {
         Task { await run(background: background) }
     }
 
+    /// Kiểm ngầm bị lỗi (mạng chưa có, GitHub giới hạn lượt hỏi) thì hỏi lại sau 15 phút, tối đa 3 lần mỗi lần
+    /// mở app, thay vì im lặng chờ nhịp 6 tiếng. Thành công thì đếm lại từ 0.
+    private var failRetryWork: DispatchWorkItem?
+    private var failRetryCount = 0
+    private func scheduleFailRetry() {
+        guard failRetryCount < 3 else {
+            Diag.log("Kiểm cập nhật: đã thử lại 3 lần, chờ lần kiểm sau")
+            return
+        }
+        failRetryCount += 1
+        failRetryWork?.cancel()
+        let w = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.check(background: true) }
+        }
+        failRetryWork = w
+        DispatchQueue.main.asyncAfter(deadline: .now() + 15 * 60, execute: w)
+    }
+
+    /// Giờ theo máy người dùng (lastUpdateCheck lưu dạng Date, `defaults read` mới hiện giờ UTC).
+    private static let stamp: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "dd/MM HH:mm"
+        return f
+    }()
+
     private func run(background: Bool) async {
+        // Nhật ký chẩn đoán: mỗi lần kiểm một dòng (giờ máy, ngầm hay bấm tay, kết quả), để khi người dùng báo
+        // "không thấy báo bản mới" thì xin nhật ký là biết app có kiểm không, kiểm ra gì.
+        let kind = background ? "ngầm" : "bấm tay"
+        let last = Prefs.lastUpdateCheck.map { Updater.stamp.string(from: $0) } ?? "chưa có"
+        var loggedCode = false
         var req = URLRequest(url: AppInfo.apiLatestRelease, timeoutInterval: 15)
         req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         req.setValue("RinNotch/\(AppInfo.version)", forHTTPHeaderField: "User-Agent")
         do {
             let (data, resp) = try await URLSession.shared.data(for: req)
-            guard (resp as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
+            let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            guard code == 200 else {
+                loggedCode = true
+                let hint: String = (code == 403 || code == 429) ? " (giới hạn lượt hỏi)" : ""
+                Diag.log("Kiểm cập nhật (\(kind)): GitHub trả mã \(code)" + hint)
+                throw URLError(.badServerResponse)
+            }
             let rel = try JSONDecoder().decode(Release.self, from: data)
+            failRetryCount = 0
+            failRetryWork?.cancel()
             if Updater.isNewer(rel.version, than: AppInfo.version) {
+                let pkg: String = rel.canAutoInstall ? "" : ", chưa đủ gói cài"
+                Diag.log("Kiểm cập nhật (\(kind)): có bản \(rel.version)" + pkg + ", lần kiểm trước \(last)")
                 // Vừa bấm phát hành thì GitHub đã coi là bản mới nhất nhưng gói cài phải ~5 phút sau mới gắn vào.
                 // Lúc đó chưa báo (kiểm tra nền) và hẹn hỏi lại, để không kẹt ở nút tải thủ công.
                 // Hết lượt chờ mà vẫn thiếu gói (bản phát hành lỗi) thì vẫn báo, người dùng tải thủ công.
@@ -5253,8 +5293,14 @@ final class Updater: ObservableObject {
             }
             Prefs.lastUpdateCheck = Date()
             lastFound = nil
+            Diag.log("Kiểm cập nhật (\(kind)): đang là bản mới nhất \(AppInfo.version) (GitHub: \(rel.version)), lần kiểm trước \(last)")
             if !background { state = .upToDate }
         } catch {
+            // Mã lỗi của GitHub đã ghi ở trên; còn lại (mất mạng, hết giờ chờ, đọc JSON lỗi) ghi ở đây.
+            if !loggedCode {
+                Diag.log("Kiểm cập nhật (\(kind)): lỗi \(error.localizedDescription)")
+            }
+            if background { scheduleFailRetry() }
             if !background {
                 // Đã biết có bản mới mà lần hỏi lại lỗi (mạng, giới hạn GitHub) thì giữ bản đó, không xoá dấu báo.
                 if let r = lastFound { state = .available(r) } else { state = .failed }
@@ -5290,8 +5336,10 @@ final class Updater: ObservableObject {
             try Installer.replaceAndRelaunch(with: newApp)
         } catch let e as UpdateError {
             state = .installFailed(rel, e.message)
+            Diag.log("Cài bản \(rel.version) lỗi: \(e.message)")
         } catch {
             state = .installFailed(rel, UpdateError.failed(error.localizedDescription).message)
+            Diag.log("Cài bản \(rel.version) lỗi: \(error.localizedDescription)")
         }
         onChange?()
         onInstallFailed?()
