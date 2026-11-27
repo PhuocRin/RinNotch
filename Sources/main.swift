@@ -4889,6 +4889,12 @@ struct WelcomeView: View {
                             }
                         }
                         GridRow {
+                            Label(L("Đăng ký kênh, theo dõi Phước Rin", "Subscribe and follow Phước Rin"), systemImage: "bell.fill")
+                                .font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
+                                .padding(.top, 4)
+                                .gridCellColumns(2)
+                        }
+                        GridRow {
                             Grid(horizontalSpacing: 8) {
                                 GridRow {
                                     action("YouTube", "play.rectangle.fill", Brand.youtube) { NSWorkspace.shared.open(AppInfo.youtubeURL) }
@@ -4900,8 +4906,8 @@ struct WelcomeView: View {
                         }
                     }
                 }
-                Text(L("Đăng ký kênh, theo dõi Phước Rin để biết khi có bản mới và app mới. Tặng sao cần tài khoản GitHub: mở trang RinNotch, bấm nút Star ở góc trên.",
-                       "Follow Phước Rin to hear about new versions and new apps. Starring needs a GitHub account: open the RinNotch page and click Star at the top."))
+                Text(L("Để biết khi có bản mới và app mới. Tặng sao cần tài khoản GitHub: mở trang RinNotch, bấm nút Star ở góc trên.",
+                       "Hear about new versions and new apps first. Starring needs a GitHub account: open the RinNotch page and click Star at the top."))
                     .noteText().multilineTextAlignment(.center)
             }
             .padding(16).frame(maxWidth: .infinity).softCard()
