@@ -334,6 +334,7 @@ final class NotchModel: ObservableObject {
         if let data = d.data(forKey: "notes"), let list = try? JSONDecoder().decode([NoteItem].self, from: data) {
             notes = list
         }
+        pruneNotes()
     }
 
     func showTransient(_ t: Transient, seconds: Double = 3) {
@@ -392,6 +393,62 @@ final class NotchModel: ObservableObject {
     }
 
     // Ghi chú
+    /// Danh sách "Gần đây" chỉ là bản nhớ trong RinNotch: xoá ở đây KHÔNG đụng tới app Ghi chú (Notes).
+    @Published var noteUndo: [NoteItem]?
+    private var noteUndoWork: DispatchWorkItem?
+
+    /// Tự xoá ghi chú cũ khỏi danh sách (Phước yêu cầu 27/11). Chỉ xoá ghi chú ĐÃ lưu vào Notes:
+    /// ghi chú lưu lỗi chỉ còn nằm trong RinNotch nên giữ lại tới khi người dùng tự xoá.
+    /// Không chạy theo nhịp lặp: gọi lúc mở app, lúc mở mục Ghi chú / bảng lớn và khi đổi cài đặt.
+    func pruneNotes() {
+        let days = Prefs.noteKeepDays
+        guard days > 0 else { return }
+        let cut = Date().addingTimeInterval(-Double(days) * 86_400)
+        let before = notes.count
+        notes.removeAll { $0.savedToNotes && $0.date < cut }
+        if notes.count != before { saveNotes() }
+    }
+
+    func deleteNote(_ id: UUID) {
+        guard notes.contains(where: { $0.id == id }) else { return }
+        keepUndo()
+        notes.removeAll { $0.id == id }
+        saveNotes()
+        noteStatus = L("Đã xoá khỏi danh sách. Ghi chú trong app Notes vẫn còn.", "Removed from the list. The note in Notes is untouched.")
+    }
+
+    func clearNotes() {
+        guard !notes.isEmpty else { return }
+        keepUndo()
+        notes = []
+        saveNotes()
+        noteStatus = L("Đã xoá hết danh sách. Ghi chú trong app Notes vẫn còn.", "List cleared. Your notes in Notes are untouched.")
+    }
+
+    func undoNoteDelete() {
+        guard let old = noteUndo else { return }
+        notes = old
+        saveNotes()
+        noteUndo = nil
+        noteUndoWork?.cancel()
+        noteStatus = L("Đã hoàn tác", "Restored")
+    }
+
+    /// Giữ bản cũ 8 giây để Hoàn tác (lỡ tay xoá ghi chú chưa lưu được vào Notes là mất hẳn).
+    private func keepUndo() {
+        noteUndo = notes
+        noteUndoWork?.cancel()
+        let w = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.noteUndo != nil else { return }
+                self.noteUndo = nil
+                self.noteStatus = nil
+            }
+        }
+        noteUndoWork = w
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8, execute: w)
+    }
+
     func saveNotes() {
         if notes.count > 30 { notes.removeLast(notes.count - 30) }
         let keep = Array(notes.prefix(30))
@@ -2300,6 +2357,10 @@ struct NotesView: View {
                         .foregroundStyle(.white.opacity(0.6))
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
+                    if m.noteUndo != nil {
+                        Button(L("Hoàn tác", "Undo")) { m.undoNoteDelete() }
+                            .buttonStyle(PillButton())
+                    }
                     Spacer(minLength: 0)
                     Button(L("Lưu vào Notes", "Save to Notes")) { NotesSaver.save(m) }
                         .buttonStyle(PillButton(prominent: true))
@@ -2319,18 +2380,23 @@ struct NotesView: View {
             }
             if !m.notes.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(L("Gần đây", "Recent")).font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.5))
+                    HStack(spacing: 4) {
+                        Text(L("Gần đây", "Recent")).font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.5))
+                        Spacer(minLength: 0)
+                        Button { m.clearNotes() } label: {
+                            Image(systemName: "trash")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(.white.opacity(0.55))
+                                .frame(width: 20, height: 18)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(HoverPlain())
+                        .help(L("Xoá hết danh sách gần đây (không xoá trong app Notes)", "Clear the recent list (does not delete anything in Notes)"))
+                    }
                     ScrollView(.vertical, showsIndicators: false) {
-                        VStack(alignment: .leading, spacing: 6) {
+                        VStack(alignment: .leading, spacing: 4) {
                             ForEach(m.notes.prefix(10)) { n in
-                                HStack(alignment: .top, spacing: 6) {
-                                    Image(systemName: n.savedToNotes ? "checkmark.circle.fill" : "circle.dashed")
-                                        .font(.system(size: 10))
-                                        .foregroundStyle(n.savedToNotes ? Color.green : Color.white.opacity(0.4))
-                                        .padding(.top, 2)
-                                    Text(n.text).font(.system(size: 11)).lineLimit(2)
-                                    Spacer(minLength: 0)
-                                }
+                                NoteRow(m: m, note: n)
                             }
                         }
                     }
@@ -2338,7 +2404,50 @@ struct NotesView: View {
                 .frame(width: 170)
             }
         }
-        .onAppear { DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { focused = true } }
+        .onAppear {
+            m.pruneNotes()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { focused = true }
+        }
+    }
+}
+
+/// Một dòng trong danh sách Gần đây của tai thỏ: rê chuột hiện nút xoá, chuột phải có Chép / Xoá.
+struct NoteRow: View {
+    @ObservedObject var m: NotchModel
+    let note: NoteItem
+    @State private var hover = false
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: note.savedToNotes ? "checkmark.circle.fill" : "circle.dashed")
+                .font(.system(size: 10))
+                .foregroundStyle(note.savedToNotes ? Color.green : Color.white.opacity(0.4))
+                .padding(.top, 2)
+            Text(note.text).font(.system(size: 11)).lineLimit(2)
+            Spacer(minLength: 0)
+            if hover {
+                Button { m.deleteNote(note.id) } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.white.opacity(0.7))
+                        .contentShape(Circle())
+                }
+                .buttonStyle(HoverPlain())
+                .help(L("Xoá khỏi danh sách (không xoá trong app Notes)", "Remove from the list (does not delete it in Notes)"))
+                .transition(.opacity.combined(with: .scale(scale: 0.7)))
+            }
+        }
+        .padding(.horizontal, 5).padding(.vertical, 3)
+        .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(hover ? 0.08 : 0)))
+        .contentShape(Rectangle())
+        .onHover { h in withAnimation(HoverAnim.bounce) { hover = h } }
+        .help(note.savedToNotes ? "" : L("Chưa lưu được vào Notes: ghi chú này chỉ còn trong RinNotch", "Not saved to Notes: this note only exists in RinNotch"))
+        .contextMenu {
+            Button(L("Sao chép", "Copy")) { ClipboardWatcher.shared?.copyText(note.text, source: L("RinNotch · Ghi chú", "RinNotch · Notes")) }
+            Divider()
+            Button(L("Xoá khỏi danh sách", "Remove from List")) { m.deleteNote(note.id) }
+            Button(L("Xoá hết danh sách", "Clear List")) { m.clearNotes() }
+        }
     }
 }
 
@@ -2348,6 +2457,8 @@ enum NotesSaver {
         let text = m.noteDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         let item = NoteItem(text: text, date: Date(), savedToNotes: false)
+        // Đã có ghi chú mới thì bỏ Hoàn tác: khôi phục danh sách cũ sẽ làm mất ghi chú vừa lưu.
+        m.noteUndo = nil
         m.notes.insert(item, at: 0)
         m.noteDraft = ""
         m.noteStatus = L("Đang lưu vào Notes…", "Saving to Notes…")
@@ -3837,6 +3948,8 @@ enum Prefs {
     static var hideInFullscreen: Bool { bool("hideInFullscreen") }
     static var awakeStopLowBattery: Bool { bool("awakeStopLowBattery") }
     static var awakeStopOnSleep: Bool { bool("awakeStopOnSleep") }
+    /// Số ngày giữ ghi chú trong danh sách Gần đây; 0 = không tự xoá.
+    static var noteKeepDays: Int { d.object(forKey: "noteKeepDays") as? Int ?? 30 }
     static var clipLimit: Int { max(d.object(forKey: "clipLimit") as? Int ?? 50, 10) }
     /// Xem trước liên kết phải hỏi trang web: mặc định tắt, ai cần thì bật.
     static var linkPreview: Bool { d.object(forKey: "linkPreview") as? Bool ?? false }
@@ -4030,6 +4143,8 @@ final class Panel {
         w.makeKeyAndOrderFront(nil)
         w.orderFrontRegardless()
     }
+
+    func close() { window?.close() }
 }
 
 // MARK: - Cài đặt (cửa sổ)
@@ -4056,6 +4171,7 @@ struct SettingsView: View {
     @AppStorage("defaultTab") private var defaultTab = "last"
     @AppStorage("openMode") private var openMode = OpenMode.both.rawValue
     @AppStorage("clipLimit") private var clipLimit = 50
+    @AppStorage("noteKeepDays") private var noteKeepDays = 30
     @AppStorage("linkPreview") private var linkPreview = false
     @AppStorage("awakeStopLowBattery") private var awakeStopLowBattery = true
     @AppStorage("awakeStopOnSleep") private var awakeStopOnSleep = true
@@ -4249,6 +4365,25 @@ struct SettingsView: View {
                         .glassButton()
                         if let backupNote { Text(backupNote).font(.system(size: 11)).foregroundStyle(.green) }
                     }
+                }
+
+                section(L("Ghi chú", "Notes")) {
+                    HStack {
+                        Text(L("Tự xoá khỏi danh sách Gần đây", "Auto-remove from Recent")).font(.system(size: 13))
+                        Spacer()
+                        Picker("", selection: $noteKeepDays) {
+                            Text(L("Sau 7 ngày", "After 7 days")).tag(7)
+                            Text(L("Sau 30 ngày", "After 30 days")).tag(30)
+                            Text(L("Sau 90 ngày", "After 90 days")).tag(90)
+                            Text(L("Không tự xoá", "Never")).tag(0)
+                        }
+                        .labelsHidden()
+                        .frame(width: 170)
+                        .onChange(of: noteKeepDays) { AppDelegate.shared?.model.pruneNotes() }
+                    }
+                    Text(L("Danh sách Gần đây chỉ nằm trong RinNotch: xoá ở đây (rê chuột vào ghi chú → nút ✕, hoặc chuột phải) không xoá gì trong app Ghi chú, và xoá trong app Ghi chú cũng không làm mất dòng ở đây. Ghi chú chưa lưu được vào Ghi chú thì không tự xoá.",
+                           "The Recent list lives only in RinNotch: removing a note here (hover → ✕, or right-click) never deletes it in Notes, and deleting in Notes doesn't remove it here. Notes that failed to save to Notes are never auto-removed."))
+                        .noteText()
                 }
 
                 section(L("Giữ máy thức", "Keep awake")) {
@@ -4514,6 +4649,10 @@ enum TipTopic: String, CaseIterable, Identifiable {
                                                     "⌘C, ⌘V, ⌘A, ⌘Z work while typing. The ⤢ button opens a big notes editor in the big board.")),
             ("pin", L("Đang gõ thì tai thỏ không tự thu lại. Bấm ra ngoài hoặc Esc để đóng.",
                      "The notch stays open while you type. Click outside or press Esc to close.")),
+            ("xmark.circle", L("Rê chuột vào một ghi chú trong Gần đây rồi bấm ✕ (hoặc chuột phải) để xoá khỏi danh sách. Chỉ xoá trong RinNotch, app Ghi chú giữ nguyên; lỡ tay thì bấm Hoàn tác.",
+                              "Hover a note in Recent and click ✕ (or right-click) to remove it from the list. It's only removed in RinNotch, never in Notes; click Undo if you slip.")),
+            ("calendar.badge.clock", L("Ghi chú đã lưu tự rời danh sách sau 30 ngày. Đổi trong Cài đặt → Ghi chú.",
+                                      "Saved notes leave the list after 30 days. Change it in Settings → Notes.")),
         ]
         case .timer: return [
             ("stopwatch", L("Bấm giờ chạy từ 00:00:00, hoặc Đếm ngược với các mốc có sẵn.",
@@ -4669,6 +4808,99 @@ struct AboutView: View {
             Text(L("Miễn phí · Mã nguồn mở (MIT)", "Free · Open source (MIT)")).noteText().padding(.top, 2)
         }
         .panelStyle()
+    }
+
+    private func link(_ title: String, _ symbol: String, _ url: URL) -> some View {
+        Button {
+            NSWorkspace.shared.open(url)
+        } label: {
+            Label(title, systemImage: symbol).font(.system(size: 12, weight: .medium)).frame(maxWidth: .infinity)
+        }
+        .glassButton().controlSize(.large)
+    }
+}
+
+// MARK: - Chào mừng (cài mới)
+
+/// Tự mở MỘT lần khi cài mới (Phước yêu cầu 27/11): chào, chỉ cách mở, rồi mời ủng hộ / theo dõi / gắn sao.
+/// Không tự hiện lại; mở lại được từ thanh menu → Chào mừng.
+struct WelcomeView: View {
+    var body: some View {
+        VStack(spacing: 12) {
+            AppIconView(size: 84)
+            Text(L("Chào mừng bạn đến với RinNotch", "Welcome to RinNotch"))
+                .font(.system(size: 22, weight: .bold, design: .rounded)).multilineTextAlignment(.center)
+            Text(L("Cảm ơn bạn đã cài app. RinNotch miễn phí, do Phước Rin tự làm.",
+                   "Thanks for installing. RinNotch is free, made by Phước Rin."))
+                .font(.system(size: 13)).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(alignment: .leading, spacing: 10) {
+                step("cursorarrow.rays", L("Rê chuột lên tai thỏ để mở. Mac không có tai thỏ: rê lên viên đen nhỏ giữa mép trên màn hình.",
+                                          "Hover over the notch to open it. No notch? Hover over the small black pill at the top centre of the screen."))
+                step("keyboard", L("Hoặc bấm ⌃⇧1 → ⌃⇧9 để mở thẳng từng mục.", "Or press ⌃⇧1 → ⌃⇧9 to jump straight to a section."))
+                step("menubar.rectangle", L("Cài đặt, Mẹo dùng và Kiểm tra cập nhật nằm ở biểu tượng RinNotch trên thanh menu.",
+                                            "Settings, Tips and Check for Updates live in the RinNotch menu bar icon."))
+                Button {
+                    AppDelegate.shared?.welcomePanel.close()
+                    AppDelegate.shared?.showTips(.start, attention: true)
+                } label: {
+                    Label(L("Xem mẹo dùng", "See the tips"), systemImage: "lightbulb.fill")
+                        .font(.system(size: 13, weight: .semibold)).frame(maxWidth: .infinity).padding(.vertical, 3)
+                }
+                .glassButton(prominent: true).controlSize(.large)
+            }
+            .padding(16).frame(maxWidth: .infinity, alignment: .leading).softCard()
+
+            VStack(spacing: 10) {
+                Text(L("Nếu thấy RinNotch hay", "If you like RinNotch")).font(.system(size: 13, weight: .semibold))
+                GlassGroup(spacing: 10) {
+                    Grid(horizontalSpacing: 10, verticalSpacing: 10) {
+                        GridRow {
+                            action(L("Ủng hộ tác giả", "Support the author"), "heart.fill") {
+                                AppDelegate.shared?.supportPanel.show(attention: true)
+                            }
+                            action(L("Tặng sao GitHub", "Star on GitHub"), "star.fill") {
+                                NSWorkspace.shared.open(AppInfo.repoURL)
+                            }
+                        }
+                        GridRow {
+                            Grid(horizontalSpacing: 8) {
+                                GridRow {
+                                    link("YouTube", "play.rectangle.fill", AppInfo.youtubeURL)
+                                    link("Facebook", "f.square.fill", AppInfo.facebookURL)
+                                    link("TikTok", "music.note", AppInfo.tiktokURL)
+                                }
+                            }
+                            .gridCellColumns(2)
+                        }
+                    }
+                }
+                Text(L("Đăng ký kênh, theo dõi Phước Rin để biết khi có bản mới và app mới. Tặng sao cần tài khoản GitHub: mở trang RinNotch, bấm nút Star ở góc trên.",
+                       "Follow Phước Rin to hear about new versions and new apps. Starring needs a GitHub account: open the RinNotch page and click Star at the top."))
+                    .noteText().multilineTextAlignment(.center)
+            }
+            .padding(16).frame(maxWidth: .infinity).softCard()
+
+            Button(L("Bắt đầu dùng", "Get started")) { AppDelegate.shared?.welcomePanel.close() }
+                .glassButton().controlSize(.large)
+        }
+        .panelStyle(width: 420)
+    }
+
+    private func step(_ symbol: String, _ text: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: symbol).font(.system(size: 14, weight: .semibold)).foregroundStyle(Color.accentColor).frame(width: 22)
+            Text(text).font(.system(size: 13)).fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func action(_ title: String, _ symbol: String, _ run: @escaping () -> Void) -> some View {
+        Button(action: run) {
+            Label(title, systemImage: symbol).font(.system(size: 12, weight: .semibold)).frame(maxWidth: .infinity)
+        }
+        .glassButton().controlSize(.large)
     }
 
     private func link(_ title: String, _ symbol: String, _ url: URL) -> some View {
@@ -5220,6 +5452,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     lazy var aboutPanel = Panel { AnyView(AboutView()) }
     lazy var supportPanel = Panel { AnyView(SupportView()) }
     lazy var tipsPanel = Panel { AnyView(TipsView()) }
+    lazy var welcomePanel = Panel { AnyView(WelcomeView()) }
     lazy var bugPanel = Panel { AnyView(BugReportView()) }
     lazy var updatePanel = Panel { [unowned self] in AnyView(UpdateView(updater: self.updater)) }
 
@@ -5312,11 +5545,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         updater.onInstallFailed = { [weak self] in self?.updatePanel.show(attention: true) }
         let justUpdated = updater.noteJustUpdated()
-        // Mẹo dùng tự mở một lần (cài mới hoặc vừa lên bản có Mẹo dùng); lúc đó không mở thêm cửa sổ Cập nhật.
-        if !UserDefaults.standard.bool(forKey: "tipsShown") {
-            UserDefaults.standard.set(true, forKey: "tipsShown")
+        // Cài mới (chưa từng mở Mẹo dùng): mở cửa sổ Chào mừng một lần, trong đó có nút Xem mẹo dùng.
+        // Lúc đó không mở thêm cửa sổ Cập nhật. Người đang dùng bản cũ đã thấy Mẹo dùng nên không hiện Chào mừng.
+        let d = UserDefaults.standard
+        if !d.bool(forKey: "tipsShown") {
+            d.set(true, forKey: "tipsShown")
+            d.set(true, forKey: "welcomeShown")
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-                MainActor.assumeIsolated { self?.showTips(.start, attention: true) }
+                MainActor.assumeIsolated { self?.welcomePanel.show(attention: true) }
             }
         } else if justUpdated {
             updatePanel.show(attention: true)
@@ -5385,6 +5621,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(item(L("Cài đặt…", "Settings…"), #selector(showSettings), key: ","))
         menu.addItem(item(L("Kiểm tra cập nhật…", "Check for Updates…"), #selector(showUpdate)))
         menu.addItem(.separator())
+        menu.addItem(item(L("Chào mừng", "Welcome"), #selector(showWelcome)))
         menu.addItem(item(L("Mẹo dùng", "Tips"), #selector(showTipsAction)))
         menu.addItem(item(L("Giới thiệu RinNotch", "About RinNotch"), #selector(showAbout)))
         menu.addItem(item(L("Báo lỗi…", "Report a Bug…"), #selector(showBug)))
@@ -5429,6 +5666,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func showAbout() { aboutPanel.show() }
     @objc func showSupport() { supportPanel.show() }
     @objc func showTipsAction() { showTips(.start) }
+    @objc func showWelcome() { welcomePanel.show() }
     func showTips(_ topic: TipTopic, attention: Bool = false) {
         Tips.startTopic = topic
         tipsPanel.show(attention: attention)

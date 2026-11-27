@@ -673,6 +673,10 @@ struct BigNotesView: View {
                 HStack {
                     Text(m.noteStatus ?? L("Lưu vào app Ghi chú, thư mục RinNotch", "Save to the Notes app, RinNotch folder"))
                         .font(.system(size: 12)).foregroundStyle(.white.opacity(0.6)).lineLimit(2)
+                    if m.noteUndo != nil {
+                        Button(L("Hoàn tác", "Undo")) { m.undoNoteDelete() }
+                            .buttonStyle(PillButton())
+                    }
                     Spacer()
                     Button(L("Lưu vào Notes", "Save to Notes")) { NotesSaver.save(m) }
                         .buttonStyle(PillButton(prominent: true))
@@ -680,7 +684,19 @@ struct BigNotesView: View {
                 }
             }
             VStack(alignment: .leading, spacing: 8) {
-                Text(L("Gần đây", "Recent")).font(.system(size: 12, weight: .semibold)).foregroundStyle(.white.opacity(0.55))
+                HStack {
+                    Text(L("Gần đây", "Recent")).font(.system(size: 12, weight: .semibold)).foregroundStyle(.white.opacity(0.55))
+                    Spacer()
+                    if !m.notes.isEmpty {
+                        Button { m.clearNotes() } label: {
+                            Label(L("Xoá hết", "Clear"), systemImage: "trash").font(.system(size: 11, weight: .medium))
+                        }
+                        .buttonStyle(HoverPlain()).foregroundStyle(.white.opacity(0.6))
+                        .help(L("Xoá hết danh sách gần đây (không xoá trong app Notes)", "Clear the recent list (does not delete anything in Notes)"))
+                    }
+                }
+                Text(keepNote).font(.system(size: 10.5)).foregroundStyle(.white.opacity(0.4))
+                    .fixedSize(horizontal: false, vertical: true)
                 ScrollView {
                     VStack(alignment: .leading, spacing: 8) {
                         ForEach(m.notes) { n in
@@ -693,6 +709,9 @@ struct BigNotesView: View {
                                     Spacer()
                                     Button(L("Chép", "Copy")) { ClipboardWatcher.shared?.copyText(n.text, source: L("RinNotch · Ghi chú", "RinNotch · Notes")) }
                                         .buttonStyle(HoverPlain()).foregroundStyle(Color.accentColor)
+                                    Button(L("Xoá", "Remove")) { m.deleteNote(n.id) }
+                                        .buttonStyle(HoverPlain()).foregroundStyle(.white.opacity(0.6))
+                                        .help(L("Xoá khỏi danh sách (không xoá trong app Notes)", "Remove from the list (does not delete it in Notes)"))
                                 }
                                 .font(.system(size: 10.5))
                                 .foregroundStyle(.white.opacity(0.5))
@@ -710,5 +729,14 @@ struct BigNotesView: View {
             .frame(width: 280)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear { m.pruneNotes() }
+    }
+
+    private var keepNote: String {
+        let days = Prefs.noteKeepDays
+        return days > 0
+            ? L("Chỉ xoá trong RinNotch, app Notes giữ nguyên. Ghi chú đã lưu tự rời danh sách sau \(days) ngày.",
+                "Removing here never touches Notes. Saved notes leave this list after \(days) days.")
+            : L("Chỉ xoá trong RinNotch, app Notes giữ nguyên.", "Removing here never touches Notes.")
     }
 }
