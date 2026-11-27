@@ -4857,19 +4857,19 @@ struct WelcomeView: View {
                 GlassGroup(spacing: 10) {
                     Grid(horizontalSpacing: 10, verticalSpacing: 10) {
                         GridRow {
-                            action(L("Ủng hộ tác giả", "Support the author"), "heart.fill") {
+                            action(L("Ủng hộ tác giả", "Support the author"), "heart.fill", Brand.support) {
                                 AppDelegate.shared?.supportPanel.show(attention: true)
                             }
-                            action(L("Tặng sao GitHub", "Star on GitHub"), "star.fill") {
+                            action(L("Tặng sao GitHub", "Star on GitHub"), "star.fill", Brand.star, text: Brand.starText) {
                                 NSWorkspace.shared.open(AppInfo.repoURL)
                             }
                         }
                         GridRow {
                             Grid(horizontalSpacing: 8) {
                                 GridRow {
-                                    link("YouTube", "play.rectangle.fill", AppInfo.youtubeURL)
-                                    link("Facebook", "f.square.fill", AppInfo.facebookURL)
-                                    link("TikTok", "music.note", AppInfo.tiktokURL)
+                                    action("YouTube", "play.rectangle.fill", Brand.youtube) { NSWorkspace.shared.open(AppInfo.youtubeURL) }
+                                    action("Facebook", "f.square.fill", Brand.facebook) { NSWorkspace.shared.open(AppInfo.facebookURL) }
+                                    action("TikTok", "music.note", scheme == .dark ? Brand.tiktokDark : Brand.tiktok) { NSWorkspace.shared.open(AppInfo.tiktokURL) }
                                 }
                             }
                             .gridCellColumns(2)
@@ -4896,20 +4896,47 @@ struct WelcomeView: View {
         }
     }
 
-    private func action(_ title: String, _ symbol: String, _ run: @escaping () -> Void) -> some View {
-        Button(action: run) {
-            Label(title, systemImage: symbol).font(.system(size: 12, weight: .semibold)).frame(maxWidth: .infinity)
-        }
-        .glassButton().controlSize(.large)
-    }
+    @Environment(\.colorScheme) private var scheme
 
-    private func link(_ title: String, _ symbol: String, _ url: URL) -> some View {
-        Button {
-            NSWorkspace.shared.open(url)
-        } label: {
-            Label(title, systemImage: symbol).font(.system(size: 12, weight: .medium)).frame(maxWidth: .infinity)
+    /// Nút màu theo thương hiệu (Phước muốn có màu, 27/11). Chữ trắng, riêng nút sao nền vàng thì chữ tối cho dễ đọc.
+    private func action(_ title: String, _ symbol: String, _ tint: Color, text: Color = .white,
+                        _ run: @escaping () -> Void) -> some View {
+        Button(action: run) {
+            Label(title, systemImage: symbol)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(text)
+                .frame(maxWidth: .infinity)
         }
-        .glassButton().controlSize(.large)
+        .modifier(TintedGlassButton(tint: tint))
+        .controlSize(.large)
+    }
+}
+
+/// Màu các nút trong cửa sổ Chào mừng. Chữ trắng trên các nền này đạt tương phản ~4:1 trở lên.
+enum Brand {
+    static let support = Color(red: 0.85, green: 0.24, blue: 0.43)    // hồng đậm
+    static let star = Color(red: 0.96, green: 0.72, blue: 0.0)        // vàng sao
+    static let starText = Color(red: 0.12, green: 0.1, blue: 0.05)
+    static let youtube = Color(red: 0.93, green: 0.0, blue: 0.0)
+    static let facebook = Color(red: 0.09, green: 0.47, blue: 0.95)
+    static let tiktok = Color(red: 0.07, green: 0.07, blue: 0.08)
+    static let tiktokDark = Color(white: 0.34)                         // nền tối thì đen sẽ chìm
+}
+
+struct TintedGlassButton: ViewModifier {
+    let tint: Color
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        #if compiler(>=6.2)
+        if #available(macOS 26.0, *) {
+            content.buttonStyle(.glassProminent).tint(tint)
+        } else {
+            content.buttonStyle(.borderedProminent).tint(tint)
+        }
+        #else
+        content.buttonStyle(.borderedProminent).tint(tint)
+        #endif
     }
 }
 
